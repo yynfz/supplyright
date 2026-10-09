@@ -1,10 +1,10 @@
 import { connectorsForWallets } from "@rainbow-me/rainbowkit";
 import {
-  coinbaseWallet,
-  injectedWallet,
+  // coinbaseWallet,
+  // injectedWallet,
   metaMaskWallet,
-  rabbyWallet,
-  walletConnectWallet,
+  // rabbyWallet,
+  // walletConnectWallet,
 } from "@rainbow-me/rainbowkit/wallets";
 import { createConfig, http, type CreateConnectorFn } from "wagmi";
 import {
@@ -17,18 +17,32 @@ import {
 } from "@/lib/chains";
 import { PERSONAS, personaConnector } from "@/lib/personas";
 
-const walletConnectProjectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
+const walletConnectProjectId =
+  process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
 
 function buildConnectors(): CreateConnectorFn[] {
   const wallets = walletConnectProjectId
-    ? [metaMaskWallet, rabbyWallet, coinbaseWallet, walletConnectWallet, injectedWallet]
-    : [injectedWallet, metaMaskWallet, rabbyWallet, coinbaseWallet];
+    ? [
+        metaMaskWallet,
+        // rabbyWallet,
+        // coinbaseWallet,
+        // walletConnectWallet,
+        // injectedWallet,
+      ]
+    : [
+        // injectedWallet,
+        metaMaskWallet,
+        // rabbyWallet,
+        // coinbaseWallet,
+      ];
   const rainbow = connectorsForWallets([{ groupName: "Wallet", wallets }], {
     appName: "SupplyRight",
     // WalletConnect is only offered when a project id is configured; injected wallets work without it.
     projectId: walletConnectProjectId || "supplyright-no-walletconnect",
   });
-  const personas = localChainEnabled ? PERSONAS.map((p) => personaConnector(p)) : [];
+  const personas = localChainEnabled
+    ? PERSONAS.map((p) => personaConnector(p))
+    : [];
   return [...rainbow, ...personas];
 }
 
