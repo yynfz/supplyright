@@ -4,7 +4,7 @@ import { Suspense, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { BaseError, ContractFunctionRevertedError, maxUint256, type Hex } from "viem";
-import { AlertTriangle, CheckCircle2, Search, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ArrowRight, CheckCircle2, Search, ShieldCheck } from "lucide-react";
 import { claimManagerAbi, mockEthAbi, protectionNftAbi, recoveryClaimNftAbi, supplyRightNftAbi, vaultAbi } from "@/generated/abis";
 import { AuditTimeline } from "@/components/audit-timeline";
 import { AddressChip, HashChip, NftLink, TxLink } from "@/components/onchain";
@@ -38,7 +38,54 @@ function unitText(hex: string) {
 }
 
 export default function VerifyPage() {
-  return <Suspense fallback={<Skeleton className="h-64" />}><VerifyRoute /></Suspense>;
+  return (
+    <div className="min-h-screen bg-slate-50/50 text-navy">
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-4 sm:px-8">
+          <Link href="/" className="flex items-center gap-2.5" aria-label="SupplyRight — beranda">
+            <span className="flex size-9 items-center justify-center rounded-lg bg-navy text-teal-300">
+              <ShieldCheck className="size-5" />
+            </span>
+            <span className="text-lg font-semibold tracking-tight">
+              SupplyRight<span className="text-teal-600">.</span>
+            </span>
+          </Link>
+          <nav aria-label="Navigasi utama" className="flex items-center gap-5 text-sm">
+            <Link href="/" className="text-slate-600 transition hover:text-navy">
+              Beranda
+            </Link>
+            <span className="font-semibold text-teal-700">Verifikasi Publik</span>
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center gap-2 whitespace-nowrap rounded-md bg-navy px-4 py-2 font-medium text-white transition hover:bg-navy-soft"
+            >
+              <span className="hidden sm:inline">Buka platform</span>
+              <span className="sm:hidden">Buka app</span>
+              <ArrowRight className="size-4" />
+            </Link>
+          </nav>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:py-10">
+        <Suspense fallback={<Skeleton className="h-64" />}>
+          <VerifyRoute />
+        </Suspense>
+      </main>
+
+      <footer className="border-t border-slate-200 bg-white px-5 py-8 sm:px-8">
+        <div className="mx-auto max-w-7xl">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm font-semibold">SupplyRight<span className="text-teal-600">.</span></p>
+            <p className="text-[11px] text-slate-500">Prototipe hackathon · testnet · belum diaudit</p>
+          </div>
+          <p className="mt-4 max-w-5xl text-xs leading-relaxed text-slate-500">
+            NFT mencatat representasi digital hak pasokan dan recovery. Keberlakuan hukum, hak penagihan, dan kewajiban para pihak bergantung pada perjanjian bertanda tangan serta ketentuan yang berlaku. Prototipe ini belum diaudit dan bukan produk asuransi atau jaminan pengembalian dana.
+          </p>
+        </div>
+      </footer>
+    </div>
+  );
 }
 
 function VerifyRoute() {
@@ -180,3 +227,4 @@ function EntityVerification({ type, id, transactionHash }: { type: LookupType; i
     </> : <p className="text-sm text-muted-foreground">Menunggu pembacaan kontrak.</p>}
   </CardContent></Card>;
 }
+

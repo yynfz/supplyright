@@ -11,16 +11,18 @@ function createRequest(url: string, cookieValue?: string): NextRequest {
   return req;
 }
 
-test("unauthenticated user accessing the MainPage route '/' can view it publicly without redirection", () => {
-  const req = createRequest("https://supplyright.local/");
-  const res = middleware(req);
+test("unauthenticated user accessing public routes '/' and '/verify' can view them without redirection", () => {
+  for (const path of ["/", "/verify", "/verify?type=supply&id=1"]) {
+    const req = createRequest(`https://supplyright.local${path}`);
+    const res = middleware(req);
 
-  assert.notEqual(res.status, 307);
-  assert.notEqual(res.status, 308);
-  assert.equal(res.headers.get("location"), null);
+    assert.notEqual(res.status, 307, `Expected ${path} not to redirect`);
+    assert.notEqual(res.status, 308);
+    assert.equal(res.headers.get("location"), null);
+  }
 });
 
-test("unauthenticated user navigating from MainPage to other routes is redirected to /auth", () => {
+test("unauthenticated user navigating from MainPage to protected routes is redirected to /auth", () => {
   const routesToTest = [
     { from: "/dashboard", expectedNext: "/dashboard" },
     { from: "/registry?tab=pending", expectedNext: "/registry?tab=pending" },
@@ -28,7 +30,6 @@ test("unauthenticated user navigating from MainPage to other routes is redirecte
     { from: "/production", expectedNext: "/production" },
     { from: "/claims", expectedNext: "/claims" },
     { from: "/provider", expectedNext: "/provider" },
-    { from: "/verify", expectedNext: "/verify" },
     { from: "/admin", expectedNext: "/admin" },
     { from: "/supply/1", expectedNext: "/supply/1" },
   ];

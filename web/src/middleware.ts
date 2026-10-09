@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const AUTH_COOKIE = "supplyright.authenticated";
 
-const PUBLIC_ROUTES = new Set(["/", "/auth"]);
+const PUBLIC_ROUTES = new Set(["/", "/auth", "/verify"]);
 
 function isPublicPath(pathname: string) {
   return (
     PUBLIC_ROUTES.has(pathname) ||
     pathname.startsWith("/auth/") ||
+    pathname.startsWith("/verify/") ||
     pathname.startsWith("/api/") ||
     pathname.startsWith("/_next/") ||
     pathname === "/favicon.ico" ||

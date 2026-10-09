@@ -30,7 +30,7 @@ export default function Home() {
           </Link>
           <nav aria-label="Navigasi utama" className="flex items-center gap-5 text-sm">
             <a href="#workflow" className="hidden text-slate-600 hover:text-navy md:block">Cara kerja</a>
-            <Link href="/verify" className="hidden text-slate-600 hover:text-navy sm:block">Verifikasi publik</Link>
+            <Link href="/verify" className="hidden text-slate-600 hover:text-navy sm:block">Verifikasi Publik</Link>
             <Link href="/dashboard" className="inline-flex items-center gap-2 whitespace-nowrap rounded-md bg-navy px-4 py-2.5 font-medium text-white transition hover:bg-navy-soft"><span className="hidden sm:inline">Buka platform</span><span className="sm:hidden">Buka app</span><ArrowRight className="size-4" /></Link>
           </nav>
         </div>
@@ -50,7 +50,7 @@ export default function Home() {
               <div className="mt-9 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-300"><span className="inline-flex items-center gap-1.5"><Check className="size-3.5 text-teal-300" />Dokumen komersial privat</span><span className="inline-flex items-center gap-1.5"><Check className="size-3.5 text-teal-300" />Jejak audit publik</span><span className="inline-flex items-center gap-1.5"><Check className="size-3.5 text-teal-300" />Keputusan berbasis bukti</span></div>
             </div>
             <div className="rounded-xl border border-white/15 bg-white/5 p-4 shadow-2xl shadow-black/10 sm:p-6">
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-medium text-slate-200">Alur kompensasi pasokan</span><span className="rounded-full bg-amber-200/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-200">Ilustrasi · bukan data live</span></div>
+              {/* <div className="mb-4 flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-medium text-slate-200">Alur kompensasi pasokan</span><span className="rounded-full bg-amber-200/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-200">Ilustrasi · bukan data live</span></div> */}
               <div className="rounded-lg bg-white p-5 text-navy">
                 <div className="flex items-center gap-3"><span className="flex size-10 items-center justify-center rounded-md bg-slate-100"><FileCheck2 className="size-5" /></span><div><p className="text-sm font-semibold">Supply Right NFT</p><p className="text-[11px] text-slate-500">Hak atas pengiriman material berdasarkan perjanjian</p></div></div>
                 <div className="mt-5 grid grid-cols-3 gap-2 border-t border-slate-100 pt-4"><div><p className="text-[10px] text-slate-500">Pesanan</p><p className="mt-1 text-lg font-semibold tabular-nums">50 <span className="text-xs font-normal">MT</span></p></div><div><p className="text-[10px] text-slate-500">Diterima</p><p className="mt-1 text-lg font-semibold tabular-nums">10 <span className="text-xs font-normal">MT</span></p></div><div><p className="text-[10px] text-slate-500">Nilai kontrak</p><p className="mt-1 text-lg font-semibold tabular-nums">100 <span className="text-xs font-normal">mETH</span></p></div></div>
