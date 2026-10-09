@@ -28,3 +28,6 @@ web/storage/
 Thumbs.db
 .vscode/
 .idea/
+
+# Local Claude Code config
+.claude/

@@ -190,7 +190,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="lg:hidden">
             <Logo />
           </div>
-          <div className="hidden md:block">
+          <div className="hidden xl:block">
             <DevTimeControls />
           </div>
           <div className="ml-auto flex items-center gap-2">
