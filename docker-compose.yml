@@ -1,0 +1,46 @@
+services:
+  supplyright-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      secrets:
+        - env_local
+    image: supplyright-web:latest
+    container_name: supplyright-web
+    restart: unless-stopped
+    # Runtime secrets/config (server-only keys are read from here by the API routes).
+    env_file:
+      - ./web/.env.local
+    environment:
+      NODE_ENV: production
+      CONTRACTS_DEPLOYMENTS_DIR: /contracts/deployments
+    # Contract addresses are read per request, so a fresh `forge script` deploy is picked up without a rebuild.
+    volumes:
+      - ./contracts/deployments:/contracts/deployments:ro
+    networks:
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=yayan-cv_default"
+      # https
+      - "traefik.http.routers.supplyright.rule=Host(`supplyright.mufakat.id`)"
+      - "traefik.http.routers.supplyright.entrypoints=websecure"
+      - "traefik.http.routers.supplyright.tls=true"
+      - "traefik.http.routers.supplyright.tls.certresolver=letsencrypt"
+      - "traefik.http.services.supplyright.loadbalancer.server.port=3000"
+      # http -> https
+      - "traefik.http.routers.supplyright-http.rule=Host(`supplyright.mufakat.id`)"
+      - "traefik.http.routers.supplyright-http.entrypoints=web"
+      - "traefik.http.routers.supplyright-http.middlewares=supplyright-https"
+      - "traefik.http.middlewares.supplyright-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.supplyright-https.redirectscheme.permanent=true"
+
+networks:
+  # Shared edge network where the traefik container lives (compose project: yayan-cv).
+  proxy:
+    external: true
+    name: yayan-cv_default
+
+secrets:
+  env_local:
+    file: ./web/.env.local

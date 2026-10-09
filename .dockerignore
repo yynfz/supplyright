@@ -1,0 +1,16 @@
+.git
+.gitmodules
+node_modules
+**/node_modules
+**/.next
+**/out
+contracts/lib
+contracts/out
+contracts/cache
+contracts/broadcast
+demo
+supabase
+web/.env.local
+web/.env
+web/.env.*.local
+*.md

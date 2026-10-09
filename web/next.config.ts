@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Slim, self-contained server output for the Docker image (see ../Dockerfile).
+  output: "standalone",
   webpack: (config) => {
     // Optional dependencies of wallet SDKs pulled in transitively by RainbowKit/wagmi connectors.
     // They are only needed by features SupplyRight does not use (Base Account payments, React Native storage,
