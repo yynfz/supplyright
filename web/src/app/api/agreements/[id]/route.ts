@@ -10,7 +10,8 @@ import { supabaseAdmin } from "@/lib/server/supabase";
 export const dynamic = "force-dynamic";
 
 async function loadVisible(caller: Caller, id: string) {
-  const { data } = await supabaseAdmin().from("agreements").select("*").eq("id", id).maybeSingle();
+  const { data, error } = await supabaseAdmin().from("agreements").select("*").eq("id", id).eq("chain_id", caller.chainId).maybeSingle();
+  dbError(error, "memuat perjanjian");
   if (!data) throw new HttpError(404, "Perjanjian tidak ditemukan.");
   if (!canSeeAllAgreements(caller) && (data.buyer_address as string).toLowerCase() !== caller.address.toLowerCase()) {
     throw new HttpError(403, "Anda tidak berhak melihat perjanjian ini.");

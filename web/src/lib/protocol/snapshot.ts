@@ -17,7 +17,7 @@ import type {
   SupplyRight,
 } from "./types";
 
-const PAGE = 500n;
+import { readProtocolPages } from "./pagination";
 
 function bytes8ToString(hex: string) {
   const clean = hex.replace(/^0x/, "");
@@ -38,37 +38,36 @@ export async function fetchSnapshot(client: PublicClient, d: Deployment): Promis
   const block = await client.getBlock();
 
   const [rawRights, rawRequests, rawProtections, rawClaims, rawRecoveries] = await Promise.all([
-    client.readContract({ address: d.supplyRightNFT, abi: supplyRightNftAbi, functionName: "getSupplyRights", args: [1n, PAGE] }),
-    client.readContract({ address: d.vault, abi: vaultAbi, functionName: "getRequests", args: [1n, PAGE] }),
-    client.readContract({ address: d.vault, abi: vaultAbi, functionName: "getProtections", args: [1n, PAGE] }),
-    client.readContract({ address: d.claimManager, abi: claimManagerAbi, functionName: "getClaims", args: [1n, PAGE] }),
-    client.readContract({ address: d.recoveryClaimNFT, abi: recoveryClaimNftAbi, functionName: "getRecoveryClaims", args: [1n, PAGE] }),
+    readProtocolPages((from, count) => client.readContract({ blockNumber: block.number, address: d.supplyRightNFT, abi: supplyRightNftAbi, functionName: "getSupplyRights", args: [from, count] })),
+    readProtocolPages((from, count) => client.readContract({ blockNumber: block.number, address: d.vault, abi: vaultAbi, functionName: "getRequests", args: [from, count] })),
+    readProtocolPages((from, count) => client.readContract({ blockNumber: block.number, address: d.vault, abi: vaultAbi, functionName: "getProtections", args: [from, count] })),
+    readProtocolPages((from, count) => client.readContract({ blockNumber: block.number, address: d.claimManager, abi: claimManagerAbi, functionName: "getClaims", args: [from, count] })),
+    readProtocolPages((from, count) => client.readContract({ blockNumber: block.number, address: d.recoveryClaimNFT, abi: recoveryClaimNftAbi, functionName: "getRecoveryClaims", args: [from, count] })),
   ]);
 
   const [totalFree, totalLocked, totalPaidOut, settlementDelay, appealWindow, tokenBalance, symbol, decimals, name] =
     await Promise.all([
-      client.readContract({ address: d.vault, abi: vaultAbi, functionName: "totalFreeCollateral" }),
-      client.readContract({ address: d.vault, abi: vaultAbi, functionName: "totalLockedCollateral" }),
-      client.readContract({ address: d.vault, abi: vaultAbi, functionName: "totalPaidOut" }),
-      client.readContract({ address: d.claimManager, abi: claimManagerAbi, functionName: "settlementDelay" }),
-      client.readContract({ address: d.claimManager, abi: claimManagerAbi, functionName: "appealWindow" }),
-      client.readContract({ address: d.settlementToken, abi: mockEthAbi, functionName: "balanceOf", args: [d.vault] }),
-      client.readContract({ address: d.settlementToken, abi: mockEthAbi, functionName: "symbol" }),
-      client.readContract({ address: d.settlementToken, abi: mockEthAbi, functionName: "decimals" }),
-      client.readContract({ address: d.settlementToken, abi: mockEthAbi, functionName: "name" }),
+      client.readContract({ blockNumber: block.number, address: d.vault, abi: vaultAbi, functionName: "totalFreeCollateral" }),
+      client.readContract({ blockNumber: block.number, address: d.vault, abi: vaultAbi, functionName: "totalLockedCollateral" }),
+      client.readContract({ blockNumber: block.number, address: d.vault, abi: vaultAbi, functionName: "totalPaidOut" }),
+      client.readContract({ blockNumber: block.number, address: d.claimManager, abi: claimManagerAbi, functionName: "settlementDelay" }),
+      client.readContract({ blockNumber: block.number, address: d.claimManager, abi: claimManagerAbi, functionName: "appealWindow" }),
+      client.readContract({ blockNumber: block.number, address: d.settlementToken, abi: mockEthAbi, functionName: "balanceOf", args: [d.vault] }),
+      client.readContract({ blockNumber: block.number, address: d.settlementToken, abi: mockEthAbi, functionName: "symbol" }),
+      client.readContract({ blockNumber: block.number, address: d.settlementToken, abi: mockEthAbi, functionName: "decimals" }),
+      client.readContract({ blockNumber: block.number, address: d.settlementToken, abi: mockEthAbi, functionName: "name" }),
     ]);
 
   const ownerOf = (address: Address, abi: typeof supplyRightNftAbi | typeof protectionNftAbi | typeof recoveryClaimNftAbi, id: number) =>
     client
-      .readContract({ address, abi: abi as typeof supplyRightNftAbi, functionName: "ownerOf", args: [BigInt(id)] })
-      .catch(() => null);
+      .readContract({ blockNumber: block.number, address, abi: abi as typeof supplyRightNftAbi, functionName: "ownerOf", args: [BigInt(id)] });
 
   const rightOwners = await Promise.all(rawRights.map((_, i) => ownerOf(d.supplyRightNFT, supplyRightNftAbi, i + 1)));
   const protectionMeta = await Promise.all(
     rawProtections.map(async (_, i) => {
       const id = BigInt(i + 1);
       const [terms, owner] = await Promise.all([
-        client.readContract({ address: d.protectionNFT, abi: protectionNftAbi, functionName: "getTerms", args: [id] }).catch(() => null),
+        client.readContract({ blockNumber: block.number, address: d.protectionNFT, abi: protectionNftAbi, functionName: "getTerms", args: [id] }),
         ownerOf(d.protectionNFT, protectionNftAbi, i + 1),
       ]);
       return { claimStatus: terms ? Number(terms.claimStatus) : 0, owner };

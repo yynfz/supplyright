@@ -1,7 +1,6 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useAccount } from "wagmi";
 import type {
   Agreement,
   DocumentKind,
@@ -13,9 +12,9 @@ import { useApi } from "./use-api";
 export const offchainKeys = {
   all: ["offchain"] as const,
   agreements: (chainId: number, address?: string) => ["offchain", "agreements", chainId, address] as const,
-  agreement: (id: string) => ["offchain", "agreement", id] as const,
-  documents: (filter: string) => ["offchain", "documents", filter] as const,
-  production: (address?: string) => ["offchain", "production", address] as const,
+  agreement: (chainId: number, address: string | undefined, id: string) => ["offchain", "agreement", chainId, address, id] as const,
+  documents: (chainId: number, address: string | undefined, filter: string) => ["offchain", "documents", chainId, address, filter] as const,
+  production: (chainId: number, address?: string) => ["offchain", "production", chainId, address] as const,
 };
 
 /**
@@ -33,9 +32,9 @@ export function useAgreements(enabled = true) {
 }
 
 export function useAgreement(id: string | undefined, enabled = true) {
-  const { apiFetch, ready } = useApi();
+  const { apiFetch, ready, chainId, address } = useApi();
   return useQuery({
-    queryKey: offchainKeys.agreement(id ?? ""),
+    queryKey: offchainKeys.agreement(chainId, address, id ?? ""),
     enabled: ready && enabled && !!id,
     queryFn: () => apiFetch<{ agreement: Agreement; documents: StoredDocument[] }>(`/api/agreements/${id}`),
     retry: false,
@@ -54,10 +53,10 @@ function filterToQuery(f: DocumentFilter) {
 }
 
 export function useDocuments(filter: DocumentFilter, enabled = true) {
-  const { apiFetch, ready } = useApi();
+  const { apiFetch, ready, chainId, address } = useApi();
   const qs = filterToQuery(filter);
   return useQuery({
-    queryKey: offchainKeys.documents(qs),
+    queryKey: offchainKeys.documents(chainId, address, qs),
     enabled: ready && enabled && qs.length > 0,
     queryFn: async () => (await apiFetch<{ documents: StoredDocument[] }>(`/api/documents?${qs}`)).documents,
     retry: false,
@@ -117,10 +116,9 @@ export function useOpenDocument() {
 }
 
 export function useProductionMap(enabled = true) {
-  const { apiFetch, ready } = useApi();
-  const { address } = useAccount();
+  const { apiFetch, ready, chainId, address } = useApi();
   return useQuery({
-    queryKey: offchainKeys.production(address),
+    queryKey: offchainKeys.production(chainId, address),
     enabled: ready && enabled,
     queryFn: () => apiFetch<ProductionMap>("/api/production"),
     retry: false,

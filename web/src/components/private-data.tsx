@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useSyncExternalStore } from "react";
 import { FileCheck2, FileText, KeyRound, Loader2, Upload } from "lucide-react";
 import { useAccount } from "wagmi";
 import { toast } from "sonner";
@@ -9,8 +9,18 @@ import { HashChip } from "@/components/onchain";
 import { useOpenDocument, useUploadDocument } from "@/hooks/use-offchain";
 import { DOCUMENT_KIND_LABEL, type DocumentKind, type StoredDocument } from "@/lib/offchain-types";
 import { cn } from "@/lib/utils";
+import { useActiveChain } from "@/hooks/use-protocol";
 
 const UNLOCK_KEY = "supplyright.private-unlocked";
+const accessListeners = new Set<() => void>();
+function subscribeAccess(listener: () => void) {
+  accessListeners.add(listener);
+  window.addEventListener("storage", listener);
+  return () => {
+    accessListeners.delete(listener);
+    window.removeEventListener("storage", listener);
+  };
+}
 
 /**
  * Private (offchain) data is only fetched after the user explicitly unlocks it, which triggers the
@@ -18,14 +28,12 @@ const UNLOCK_KEY = "supplyright.private-unlocked";
  */
 export function usePrivateAccess(): [boolean, React.ReactNode] {
   const { address } = useAccount();
-  const [unlocked, setUnlocked] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    try {
-      return sessionStorage.getItem(UNLOCK_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
+  const { chainId } = useActiveChain();
+  const accessKey = UNLOCK_KEY + "." + chainId + "." + (address?.toLowerCase() ?? "");
+  const unlocked = useSyncExternalStore(subscribeAccess, () => {
+    try { return !!address && sessionStorage.getItem(accessKey) === "1"; }
+    catch { return false; }
+  }, () => false);
   const button = (
     <Button
       variant="outline"
@@ -33,9 +41,9 @@ export function usePrivateAccess(): [boolean, React.ReactNode] {
       disabled={!address}
       onClick={() => {
         try {
-          sessionStorage.setItem(UNLOCK_KEY, "1");
+          sessionStorage.setItem(accessKey, "1");
         } catch {}
-        setUnlocked(true);
+        for (const listener of accessListeners) listener();
       }}
     >
       <KeyRound className="size-4" />
@@ -51,8 +59,8 @@ export function PrivateDataNotice({ action }: { action: React.ReactNode }) {
       <div>
         <p className="font-medium">Data komersial privat tersimpan offchain</p>
         <p className="text-xs text-muted-foreground">
-          Nama pemasok, harga, dan dokumen hanya ditampilkan setelah Anda menandatangani pesan login (tanpa biaya). Onchain
-          hanya tersimpan hash dokumen.
+          Nama pemasok dan dokumen memerlukan tanda tangan login tanpa biaya. Hash dokumen, alamat wallet,
+          kuantitas, nilai komitmen, dan status transaksi tersedia publik di blockchain.
         </p>
       </div>
       {action}
@@ -84,7 +92,7 @@ export function DocumentUpload({
   disabled?: boolean;
 }) {
   const upload = useUploadDocument();
-  const inputId = `upload-${kind}-${contextKey ?? agreementId ?? "new"}`;
+  const inputId = useId();
   return (
     <div className={cn("rounded-md border p-3", className)}>
       <div className="flex items-center justify-between gap-2">

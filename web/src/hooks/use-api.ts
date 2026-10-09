@@ -6,6 +6,7 @@ import { AUTH_SESSION_TTL_MS, buildAuthMessage } from "@/lib/auth-message";
 import { useActiveChain } from "./use-protocol";
 
 type Session = { issuedAt: string; signature: string };
+const pendingSessions = new Map<string, Promise<Session>>();
 
 const key = (address: string) => `supplyright.session.${address.toLowerCase()}`;
 
@@ -34,16 +35,23 @@ export function useApi() {
       const cached = sessionStorage.getItem(key(address));
       if (cached) {
         const s = JSON.parse(cached) as Session;
-        if (Date.now() - Date.parse(s.issuedAt) < AUTH_SESSION_TTL_MS - 10 * 60 * 1000) return s;
+        const age = Date.now() - Date.parse(s.issuedAt);
+        if (typeof s.signature === "string" && age >= -5 * 60 * 1000 && age < AUTH_SESSION_TTL_MS - 10 * 60 * 1000) return s;
       }
     } catch {}
-    const issuedAt = new Date().toISOString();
-    const signature = await signMessageAsync({ message: buildAuthMessage(address, issuedAt) });
-    const session = { issuedAt, signature };
-    try {
-      sessionStorage.setItem(key(address), JSON.stringify(session));
-    } catch {}
-    return session;
+    const sessionKey = key(address);
+    const pending = pendingSessions.get(sessionKey);
+    if (pending) return pending;
+    const request = (async () => {
+      const issuedAt = new Date().toISOString();
+      const signature = await signMessageAsync({ account: address, message: buildAuthMessage(address, issuedAt) });
+      const session = { issuedAt, signature };
+      try { sessionStorage.setItem(sessionKey, JSON.stringify(session)); } catch {}
+      return session;
+    })();
+    pendingSessions.set(sessionKey, request);
+    try { return await request; }
+    finally { pendingSessions.delete(sessionKey); }
   }, [address, signMessageAsync]);
 
   const apiFetch = useCallback(
