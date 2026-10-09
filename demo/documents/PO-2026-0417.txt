@@ -1,0 +1,14 @@
+=== DATA DEMO FIKTIF / FICTIONAL DEMO DATA - TIDAK BERNILAI ===
+PURCHASE ORDER  No. PO-2026-0417
+Tanggal        : 2026-09-01
+Pembeli        : PT Contoh Manufaktur Baterai (fiktif)
+Pemasok        : PT Contoh Logam Nusantara (fiktif)
+Material       : Nikel Sulfat Hexahydrate, battery grade (NiSO4.6H2O >= 22% Ni)
+Kode material  : MAT-A-NISO4
+Kuantitas      : 50 metrik ton (MT)
+Harga satuan   : 2 mETH / MT (token uji, tanpa nilai)
+Nilai order    : 100 mETH
+Uang muka      : 30% dibayar saat PO diterbitkan
+Batas kirim    : sesuai Perjanjian Pasokan SA-2026-0417
+Incoterms      : DAP Cikarang
+Catatan        : Material kritis untuk Modul Baterai EV-48V.

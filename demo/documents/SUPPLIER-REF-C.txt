@@ -1,0 +1,2 @@
+=== DATA DEMO FIKTIF ===
+salt: c4a7e1f9b3d5260e8a1c3f5b7d9e0a24  supplier_id: SUP-ID-000452  legal_name: PT Contoh Aluminium Sulawesi (fiktif)

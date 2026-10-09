@@ -1,0 +1,5 @@
+=== DATA DEMO FIKTIF ===
+DELIVERY NOTE  DN-0417-01
+PO        : PO-2026-0417
+Diterima  : 10 MT Nikel Sulfat (batch NS-2209), kondisi baik, sesuai spesifikasi.
+Sisa      : 40 MT belum diterima.

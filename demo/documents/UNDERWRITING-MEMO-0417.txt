@@ -1,0 +1,4 @@
+=== DATA DEMO FIKTIF ===
+MEMO UNDERWRITING  Contoh Proteksi Rantai Pasok (fiktif)
+Keputusan : DISETUJUI - 20 mETH pada 20% kerugian layak.
+Dasar     : pemasok tunggal, material kritis, riwayat keterlambatan sedang.

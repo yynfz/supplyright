@@ -1,0 +1,5 @@
+=== DATA DEMO FIKTIF ===
+SUPPLIER REFERENCE RECORD (private, salted)
+salt        : 7f3c1a9e5b2d4c6081e9a7b3d5f20c48
+supplier_id : SUP-ID-000417
+legal_name  : PT Contoh Logam Nusantara (fiktif)

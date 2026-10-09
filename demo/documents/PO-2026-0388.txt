@@ -1,0 +1,4 @@
+=== DATA DEMO FIKTIF ===
+PURCHASE ORDER  No. PO-2026-0388
+Material : Litium Karbonat battery grade (MAT-B-LI2CO3), 12 MT, nilai 36 mETH.
+Pemasok  : PT Contoh Kimia Andalas (fiktif)

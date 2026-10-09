@@ -1,0 +1,30 @@
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/*/31337/
+contracts/deployments/31337*.json
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+npm-debug.log*
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+contracts/.env
+
+# Local data
+web/prisma/*.db
+web/prisma/*.db-journal
+web/storage/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

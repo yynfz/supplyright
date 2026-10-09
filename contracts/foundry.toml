@@ -1,0 +1,47 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+script = "script"
+solc_version = "0.8.28"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 200
+via_ir = true
+remappings = [
+  "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+  "forge-std/=lib/forge-std/src/",
+]
+fs_permissions = [{ access = "read-write", path = "./deployments" }]
+
+[profile.default.fuzz]
+runs = 256
+
+[profile.default.invariant]
+runs = 64
+depth = 32
+fail_on_revert = false
+
+[rpc_endpoints]
+sepolia = "${SEPOLIA_RPC_URL}"
+local = "http://127.0.0.1:8545"
+
+[etherscan]
+sepolia = { key = "${ETHERSCAN_API_KEY}" }
+
+[fmt]
+line_length = 110
+
+[lint]
+# Reviewed exclusions (see docs/SECURITY.md):
+# - unsafe-typecast: uint64(block.timestamp) is safe for the lifetime of this prototype.
+# - reentrancy-no-eth / reentrancy-events: external calls only target the protocol contracts bound once at
+#   deployment, and every state-changing entry point is nonReentrant.
+# - weak-prng: keccak256(chainid, contract, claimId, block.number) is a settlement reference, not randomness.
+# - block-timestamp: deadlines/expiry are coarse (hours-days); validator drift of seconds is acceptable.
+# - unsafe-oz-erc721-mint: _mint is deliberate so a recipient contract cannot block atomic settlement.
+exclude_lints = [
+  "unsafe-typecast", "mixed-case-variable", "mixed-case-function", "asm-keccak256",
+  "reentrancy-no-eth", "reentrancy-events", "weak-prng", "block-timestamp", "unsafe-oz-erc721-mint",
+]

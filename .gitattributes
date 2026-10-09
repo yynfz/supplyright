@@ -1,0 +1,2 @@
+demo/documents/** -text
+*.sol text eol=lf

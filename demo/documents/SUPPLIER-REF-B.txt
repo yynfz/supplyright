@@ -1,0 +1,2 @@
+=== DATA DEMO FIKTIF ===
+salt: 1b9e2f7a4c8d3e6f0a5b7c9d2e4f6a81  supplier_id: SUP-ID-000388  legal_name: PT Contoh Kimia Andalas (fiktif)

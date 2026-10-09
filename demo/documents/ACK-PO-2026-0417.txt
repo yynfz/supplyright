@@ -1,0 +1,5 @@
+=== DATA DEMO FIKTIF ===
+KONFIRMASI PEMASOK (SUPPLIER ACKNOWLEDGEMENT)
+PT Contoh Logam Nusantara (fiktif) mengonfirmasi penerimaan PO-2026-0417 dan uang muka 30%,
+serta menyanggupi pengiriman 50 MT Nikel Sulfat sebelum batas waktu yang disepakati.
+Ditandatangani secara elektronik oleh perwakilan pemasok (fiktif).

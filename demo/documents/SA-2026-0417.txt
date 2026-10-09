@@ -1,0 +1,12 @@
+=== DATA DEMO FIKTIF / FICTIONAL DEMO DATA - TIDAK BERNILAI ===
+PERJANJIAN PASOKAN (SUPPLY AGREEMENT)  No. SA-2026-0417
+Para pihak : PT Contoh Manufaktur Baterai (Pembeli) dan PT Contoh Logam Nusantara (Pemasok), keduanya fiktif.
+Pasal 1  Objek: 50 MT Nikel Sulfat battery grade sesuai PO-2026-0417.
+Pasal 2  Pengiriman: seluruh kuantitas wajib diterima sebelum batas waktu pengiriman yang tercatat.
+Pasal 3  Pembaruan status produksi dan pengiriman wajib disampaikan setiap minggu.
+Pasal 4  Wanprestasi: kekurangan kuantitas setelah batas waktu merupakan wanprestasi sebagian (partial default);
+         tidak adanya pengiriman sama sekali merupakan wanprestasi penuh (complete default).
+Pasal 5  Pembeli dapat mengalihkan (subrogasi) hak tagih atas kerugian yang telah dikompensasi kepada penyedia
+         proteksi, sepanjang didukung perjanjian pengalihan yang sah.
+Pasal 6  Penyelesaian sengketa melalui verifikator independen yang disepakati para pihak.
+Catatan  Dokumen demo. Bukan nasihat hukum. Token SupplyRight hanya merujuk hash dokumen ini.

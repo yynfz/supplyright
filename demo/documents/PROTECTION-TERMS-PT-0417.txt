@@ -1,0 +1,12 @@
+=== DATA DEMO FIKTIF ===
+SYARAT PROTEKSI PASOKAN  No. PT-0417
+Supply Right     : PO-2026-0417
+Penyedia proteksi: Contoh Proteksi Rantai Pasok (fiktif)
+Penerima manfaat : PT Contoh Manufaktur Baterai (fiktif)
+Batas pertanggungan : 20 mETH (didanai penuh di vault sebelum Protection NFT diterbitkan)
+Persentase kompensasi: 20% dari kerugian layak yang diverifikasi
+Masa klaim       : sampai 30 hari setelah batas waktu pengiriman
+Kondisi          : klaim hanya dibayar setelah verifikator independen menetapkan kerugian layak;
+                   kompensasi dibatasi batas pertanggungan dan dana terkunci.
+Hak pemulihan    : setelah kompensasi, hak tagih senilai kompensasi dicatat sebagai Recovery Claim NFT
+                   untuk penyedia, tunduk pada perjanjian subrogasi terpisah.

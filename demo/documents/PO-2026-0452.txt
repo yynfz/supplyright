@@ -1,0 +1,4 @@
+=== DATA DEMO FIKTIF ===
+PURCHASE ORDER  No. PO-2026-0452
+Material : Aluminium Ingot A7 (MAT-C-ALA7), 80 MT, nilai 48 mETH.
+Pemasok  : PT Contoh Aluminium Sulawesi (fiktif)

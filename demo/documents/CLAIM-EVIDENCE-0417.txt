@@ -1,0 +1,7 @@
+=== DATA DEMO FIKTIF ===
+BUNDEL BUKTI KLAIM  PO-2026-0417
+1. DN-0417-01: hanya 10 MT diterima sebelum batas waktu.
+2. Laporan gudang: tidak ada penerimaan tambahan setelah batas waktu.
+3. Korespondensi: pemasok tidak memberikan jadwal pengiriman baru (3 surel tanpa tanggapan).
+4. Dampak: Modul Baterai EV-48V tidak dapat diproduksi; Litium Karbonat yang sudah tiba tertahan.
+Kerugian yang diklaim: nilai 40 MT yang tidak terkirim = 80 mETH.

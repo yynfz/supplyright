@@ -1,0 +1,6 @@
+=== DATA DEMO FIKTIF ===
+LAPORAN VERIFIKASI INDEPENDEN  Contoh Surveyor Independen (fiktif)
+Klaim     : PO-2026-0417, wanprestasi sebagian
+Temuan    : kuantitas terkirim terverifikasi 10 MT; kekurangan 40 MT setelah batas waktu.
+Kerugian layak yang disetujui : 80 mETH (nilai kontrak atas 40 MT tidak terkirim).
+Kompensasi sesuai syarat proteksi (20%): 16 mETH.
