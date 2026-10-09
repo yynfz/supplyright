@@ -13,7 +13,7 @@ remappings = [
   "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
   "forge-std/=lib/forge-std/src/",
 ]
-fs_permissions = [{ access = "read-write", path = "./deployments" }]
+fs_permissions = [{ access = "read-write", path = "./deployments" }, { access = "read", path = "../demo" }]
 
 [profile.default.fuzz]
 runs = 256
