@@ -69,7 +69,7 @@ npm run build
 
 On 9 October 2026 the Foundry suite passed **58 tests in 4 suites**, including 256 fuzz runs and a 64-run / 2,048-call invariant campaign. Tests do not constitute an audit.
 
-See [Demo guide](docs/DEMO.md) for **100 mETH PO → 20 mETH coverage → 16 mETH payout → 4 mETH remaining collateral**. The offchain seed currently clears production dependency rows while recreating the demo; use an isolated database.
+See [Demo guide](docs/DEMO.md) for **100 mETH PO → 20 mETH coverage → 16 mETH payout → 4 mETH remaining collateral**. The offchain seed upserts its known demo records and exact dependency edges without deleting other records. Use a separate demo project to keep fictional data apart from real data.
 
 ## Sepolia and hosting
 

@@ -43,4 +43,4 @@ npm run lint
 npm run build
 ```
 
-`npm run seed:offchain` reads `.env.local` and imports fictional agreements/documents/dependencies from `../demo`. It defaults to chain 31337 and supports `DEMO_CHAIN_ID` and `DEMO_*_ADDRESS` overrides. Use an isolated demo database: the current seed clears all `dependencies` rows. See the [demo guide](../docs/DEMO.md).
+`npm run seed:offchain` reads `.env.local` and imports fictional agreements/documents/dependencies from `../demo`. It defaults to chain 31337 and supports `DEMO_CHAIN_ID` and `DEMO_*_ADDRESS` overrides. It upserts known demo PO hashes, material codes, product SKUs, and exact dependency edges, preserving IDs and unrelated records. Document paths use `demo/<chainId>/<filename>`; legacy files remain intact. Use a separate demo project for fictional data. See the [demo guide](../docs/DEMO.md).

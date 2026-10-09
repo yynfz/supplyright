@@ -21,7 +21,7 @@ npm run seed:offchain
 npm run dev
 ```
 
-The seed imports `demo/documents` and links PO hashes to tokens when RPC is available. **It currently clears all `dependencies` rows** while rebuilding the map; use a separate demo database.
+The seed imports `demo/documents` and links PO hashes to tokens when RPC is available. Reruns upsert only known demo PO hashes, material codes, product SKUs, and the four exact demo dependency edges. Existing IDs and unrelated rows/relationships remain intact; documents use `demo/<chainId>/<filename>` paths and legacy demo documents are preserved. Use a separate project for fictional data.
 
 ## Accounts and case study
 

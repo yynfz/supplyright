@@ -7,7 +7,8 @@
 // Env (.env.local): NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 //   optional: DEMO_CHAIN_ID (31337), LOCAL_RPC_URL / SEPOLIA_RPC_URL, DEMO_BUYER_ADDRESS, DEMO_REGISTRAR_ADDRESS,
 //             DEMO_PROVIDER_ADDRESS, DEMO_VERIFIER_ADDRESS
-// Idempotent: previous demo rows (storage_path "demo/...", demo material codes / SKUs / PO hashes) are replaced.
+// Idempotent: upserts only known demo PO hashes, material codes, SKUs and exact dependency edges.
+// No rows are deleted. Document paths are chain-scoped under demo/<chainId>/.
 
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
@@ -103,13 +104,13 @@ async function tokenIdsByPo(poHashes) {
 async function main() {
   console.log(`Seeding offchain demo data for chain ${chainId} …`);
 
-  // Clean previous demo rows
+  // Identify this demo's agreements; never delete production rows or cascade their relationships.
   const demoPoHashes = ["PO-2026-0417.txt", "PO-2026-0388.txt", "PO-2026-0452.txt"].map((f) => hashes[f]);
-  check(await sb.from("dependencies").delete().neq("id", "00000000-0000-0000-0000-000000000000"), "clear dependencies");
-  check(await sb.from("materials").delete().in("code", ["MAT-A-NISO4", "MAT-B-LI2CO3", "MAT-C-ALA7", "MAT-D-SEPPE"]), "clear materials");
-  check(await sb.from("products").delete().in("sku", ["PRD-X-EV48", "PRD-Y-INV5"]), "clear products");
-  check(await sb.from("documents").delete().like("storage_path", "demo/%"), "clear demo documents");
-  check(await sb.from("agreements").delete().eq("chain_id", chainId).in("po_hash", demoPoHashes), "clear agreements");
+  const existingAgreements = check(
+    await sb.from("agreements").select("po_hash, token_id, delivery_deadline").eq("chain_id", chainId).in("po_hash", demoPoHashes),
+    "read existing demo agreements",
+  );
+  const existingByPo = Object.fromEntries(existingAgreements.map((row) => [row.po_hash, row]));
 
   // Agreements
   const tokenIds = await tokenIdsByPo(demoPoHashes);
@@ -138,11 +139,12 @@ async function main() {
   const agreementIds = {};
   for (const [k, a] of Object.entries(AGREEMENTS)) {
     const poHash = hashes[a.po];
-    const tokenId = tokenIds[poHash] ?? null;
+    const previous = existingByPo[poHash];
+    const tokenId = tokenIds[poHash] ?? previous?.token_id ?? null;
     const row = check(
       await sb
         .from("agreements")
-        .insert({
+        .upsert({
           chain_id: chainId,
           token_id: tokenId,
           status: tokenId ? "MINTED" : "VERIFIED",
@@ -157,7 +159,7 @@ async function main() {
           quantity: a.quantity,
           unit: "MT",
           contract_value: a.contract_value,
-          delivery_deadline: new Date(a.deadline).toISOString(),
+          delivery_deadline: previous?.delivery_deadline ?? new Date(a.deadline).toISOString(),
           po_number: a.po_number,
           incoterms: a.incoterms,
           notes: a.notes,
@@ -167,7 +169,7 @@ async function main() {
           review_note: "Dokumen demo fiktif diverifikasi registrar.",
           reviewed_by: people.registrar,
           created_by: people.buyer,
-        })
+        }, { onConflict: "chain_id,po_hash" })
         .select("id")
         .single(),
       `agreement ${k}`,
@@ -180,14 +182,14 @@ async function main() {
   for (const f of files) {
     const meta = DOCS[f];
     const bytes = readFileSync(resolve(docsDir, f));
-    const path = `demo/${f}`;
+    const path = `demo/${chainId}/${f}`;
     const up = await sb.storage.from(BUCKET).upload(path, bytes, { contentType: "text/plain; charset=utf-8", upsert: true });
     if (up.error) {
       console.error(`✗ upload ${f}: ${up.error.message}`);
       process.exit(1);
     }
     check(
-      await sb.from("documents").insert({
+      await sb.from("documents").upsert({
         agreement_id: meta.agreement ? agreementIds[meta.agreement] : null,
         context_key: meta.context ?? null,
         kind: meta.kind,
@@ -197,7 +199,7 @@ async function main() {
         sha256: hashes[f],
         storage_path: path,
         uploaded_by: meta.by,
-      }),
+      }, { onConflict: "storage_path" }),
       `document ${f}`,
     );
   }
@@ -207,12 +209,12 @@ async function main() {
   const materials = check(
     await sb
       .from("materials")
-      .insert([
+      .upsert([
         { name: "Nikel Sulfat (battery grade)", code: "MAT-A-NISO4", criticality: "CRITICAL", agreement_id: agreementIds.A, po_hash: hashes["PO-2026-0417.txt"], alternative_suppliers: 0, notes: "Pemasok tunggal; kualifikasi pemasok baru ±60 hari." },
         { name: "Litium Karbonat (battery grade)", code: "MAT-B-LI2CO3", criticality: "HIGH", agreement_id: agreementIds.B, po_hash: hashes["PO-2026-0388.txt"], alternative_suppliers: 1, alternative_lead_days: 30 },
         { name: "Aluminium Ingot A7", code: "MAT-C-ALA7", criticality: "MEDIUM", agreement_id: agreementIds.C, po_hash: hashes["PO-2026-0452.txt"], alternative_suppliers: 2, alternative_lead_days: 10 },
         { name: "Separator Film PE 16µm", code: "MAT-D-SEPPE", criticality: "HIGH", reported_status: "ARRIVED", alternative_suppliers: 1, alternative_lead_days: 21, notes: "Stok gudang 45 hari (tanpa PO onchain)." },
-      ])
+      ], { onConflict: "code" })
       .select("id, code"),
     "materials",
   );
@@ -220,21 +222,21 @@ async function main() {
   const products = check(
     await sb
       .from("products")
-      .insert([
+      .upsert([
         { name: "Modul Baterai EV-48V", sku: "PRD-X-EV48", daily_output_units: 120, notes: "Produk X — butuh nikel sulfat, litium karbonat, separator." },
         { name: "Rangka Inverter 5 kW", sku: "PRD-Y-INV5", daily_output_units: 80, notes: "Produk Y — butuh aluminium ingot." },
-      ])
+      ], { onConflict: "sku" })
       .select("id, sku"),
     "products",
   );
   const p = Object.fromEntries(products.map((x) => [x.sku, x.id]));
   check(
-    await sb.from("dependencies").insert([
+    await sb.from("dependencies").upsert([
       { material_id: m["MAT-A-NISO4"], product_id: p["PRD-X-EV48"], is_blocking: true, est_disruption_days: 21, est_financial_exposure: "60", notes: "Tanpa nikel sulfat, katoda tidak dapat diproduksi." },
       { material_id: m["MAT-B-LI2CO3"], product_id: p["PRD-X-EV48"], is_blocking: true, est_disruption_days: 14, est_financial_exposure: "25" },
       { material_id: m["MAT-D-SEPPE"], product_id: p["PRD-X-EV48"], is_blocking: true, est_disruption_days: 7, est_financial_exposure: "10" },
       { material_id: m["MAT-C-ALA7"], product_id: p["PRD-Y-INV5"], is_blocking: true, est_disruption_days: 10, est_financial_exposure: "18" },
-    ]),
+    ], { onConflict: "material_id,product_id" }),
     "dependencies",
   );
   console.log("  ✓ peta dependensi produksi: 4 material, 2 produk, 4 dependensi");

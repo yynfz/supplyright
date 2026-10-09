@@ -20,7 +20,7 @@ The API/service-role key are trusted for private data. Evaluating roles have bro
 
 RPC outages can delay refreshes. Confirmed onchain state remains authoritative after offchain synchronization fails. Hashes prove integrity, not document truth or legal validity. Recovery amounts are holder self-attestations and do not move tokens. Production impact uses user-entered estimates.
 
-The UI/demo support the chosen 18-decimal MockETH configuration. Another token address does not establish decimals/transfer compatibility. Anvil keys are public and local-only. The offchain seed currently clears all production dependency rows; use an isolated demo database.
+The UI/demo support the chosen 18-decimal MockETH configuration. Another token address does not establish decimals/transfer compatibility. Anvil keys are public and local-only. The offchain seed only upserts known demo records/edges without deleting rows; those demo identifiers are reserved and will be refreshed on rerun. Use a separate demo database to keep fictional data apart from real data.
 
 ## Foundry configuration
 
