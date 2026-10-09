@@ -148,12 +148,21 @@ export function DocumentHash({ hash, doc, fallbackLabel }: { hash?: string | nul
       {doc ? (
         <button
           type="button"
+          disabled={open.isPending}
           onClick={() =>
-            open.mutate(doc.id, { onError: (e) => toast.error("Tidak dapat membuka dokumen", { description: (e as Error).message }) })
+            open.mutate(doc.id, {
+              onSuccess: (res) => {
+                if (res.isPdf) {
+                  toast.success("Bukti berhasil diekspor sebagai PDF", { description: res.fileName });
+                }
+              },
+              onError: (e) => toast.error("Tidak dapat membuka dokumen", { description: (e as Error).message }),
+            })
           }
-          className="inline-flex items-center gap-1 text-xs text-teal-700 hover:underline"
+          title={doc.file_name.toLowerCase().endsWith(".txt") || doc.kind === "CLAIM_EVIDENCE" ? "Ekspor dan unduh sebagai PDF" : "Unduh dokumen"}
+          className="inline-flex items-center gap-1 text-xs text-teal-700 hover:underline disabled:opacity-50"
         >
-          <FileText className="size-3.5" />
+          {open.isPending ? <Loader2 className="size-3.5 animate-spin text-teal-600" /> : <FileText className="size-3.5" />}
           {doc.file_name}
         </button>
       ) : (

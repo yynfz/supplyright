@@ -108,12 +108,42 @@ export function useOpenDocument() {
   const { apiFetch } = useApi();
   return useMutation({
     mutationFn: async (id: string) => {
-      const res = await apiFetch<{ url: string }>(`/api/documents/${id}`);
-      window.open(res.url, "_blank", "noopener");
+      const res = await apiFetch<{
+        url: string;
+        fileName: string;
+        sha256?: string;
+        isPdf?: boolean;
+        pdfBase64?: string;
+      }>(`/api/documents/${id}`);
+
+      if (res.pdfBase64) {
+        const byteCharacters = atob(res.pdfBase64);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: "application/pdf" });
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = res.fileName.endsWith(".pdf") ? res.fileName : `${res.fileName}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+        return res;
+      }
+
+      if (res.url) {
+        window.open(res.url, "_blank", "noopener");
+      }
       return res;
     },
   });
 }
+
+export const useDownloadDocument = useOpenDocument;
 
 export function useProductionMap(enabled = true) {
   const { apiFetch, ready, chainId, address } = useApi();
