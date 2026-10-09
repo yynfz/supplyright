@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "sync:contracts": "node scripts/sync-contracts.mjs",
+    "seed:offchain": "node --env-file=.env.local scripts/seed-offchain.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@rainbow-me/rainbowkit": "^2.2.11",
