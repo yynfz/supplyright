@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAddress } from "viem";
-import { z } from "zod";
 import { supplyRightNftAbi } from "@/generated/abis";
+import { createAgreementSchema, requireAgreementDocumentKinds } from "@/lib/agreement-validation";
 import { ROLES } from "@/lib/protocol/roles";
 import { canSeeAllAgreements, requireCaller, requireRole, serverClient } from "@/lib/server/auth";
 import { getDeployment } from "@/lib/server/deployments";
@@ -11,27 +11,6 @@ import { supabaseAdmin } from "@/lib/server/supabase";
 import { randomBytes } from "node:crypto";
 
 export const dynamic = "force-dynamic";
-
-const decimal = z.string().regex(/^\d+(\.\d+)?$/, "harus angka desimal positif");
-
-const CreateBody = z.object({
-  buyerAddress: z.string().optional(),
-  buyerName: z.string().min(2).max(160),
-  supplierName: z.string().min(2).max(160),
-  supplierRef: z.string().min(2).max(80),
-  materialName: z.string().min(2).max(160),
-  materialCode: z.string().min(2).max(40),
-  quantity: decimal,
-  unit: z.string().min(1).max(8).default("MT"),
-  contractValue: decimal,
-  deliveryDeadline: z.string().datetime(),
-  poNumber: z.string().min(2).max(60),
-  incoterms: z.string().max(40).optional(),
-  notes: z.string().max(2000).optional(),
-  poDocumentId: z.string().uuid(),
-  agreementDocumentId: z.string().uuid(),
-  supplierAckDocumentId: z.string().uuid().optional(),
-});
 
 /** Agreements visible to the caller on its chain (buyers: own; registrar/admin/provider/verifier: all). */
 export const GET = handle(async (req: Request) => {
@@ -55,7 +34,7 @@ export const GET = handle(async (req: Request) => {
 export const POST = handle(async (req: Request) => {
   const caller = await requireCaller(req);
   requireRole(caller, "buyer", "registrar", "admin");
-  const body = CreateBody.parse(await req.json());
+  const body = createAgreementSchema.parse(await req.json());
 
   let buyerAddress = caller.address;
   if (body.buyerAddress && getAddress(body.buyerAddress) !== caller.address) {
@@ -83,6 +62,7 @@ export const POST = handle(async (req: Request) => {
     if (!doc) throw new HttpError(400, "Dokumen pendukung tidak ditemukan.");
     if (doc.uploaded_by !== caller.address.toLowerCase()) throw new HttpError(403, "Dokumen harus diunggah oleh wallet Anda.");
   }
+  requireAgreementDocumentKinds(body, docs ?? []);
   const po = byId.get(body.poDocumentId)!;
   const agreement = byId.get(body.agreementDocumentId)!;
   const ack = body.supplierAckDocumentId ? byId.get(body.supplierAckDocumentId) : undefined;
