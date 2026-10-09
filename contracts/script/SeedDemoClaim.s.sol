@@ -32,7 +32,7 @@ contract SeedDemoClaim is ScriptBase {
         uint256 deadlineA = vm.parseJsonUint(demo, ".deadlineA");
         require(
             block.timestamp > deadlineA,
-            "Delivery deadline not reached yet. Wait (Sepolia) or advance time locally: cast rpc evm_increaseTime 600"
+            "Delivery deadline not reached yet. Wait (Sepolia) or locally: cast rpc evm_increaseTime 600 && cast rpc evm_mine"
         );
 
         vm.startBroadcast(buyerKey);
