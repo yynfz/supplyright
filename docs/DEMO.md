@@ -44,6 +44,19 @@ A's deadline defaults to 180 seconds after seeding (`DEMO_DEADLINE_DELAY`); prot
 
 ## Live walkthrough
 
+### Three-minute presentation
+
+Prepare agreement A, the uploaded fictional evidence, and an approved claim whose settlement delay has elapsed before starting. Keep the buyer, verifier, and provider wallets ready.
+
+| Time | Show |
+| --- | --- |
+| 0:00–0:30 | Dashboard and Production Risk: the missing nickel affects the EV-48V product; distinguish operational estimates from verified compensation. |
+| 0:30–1:00 | Supply Right A: 50 MT ordered, 10 MT delivered, signed agreement/document hashes, and the delivery deadline. |
+| 1:00–1:30 | Funded protection: 20 mETH collateral at 20%; provider's free and locked balances. |
+| 1:30–2:00 | Claim evidence and independent approval: 80 mETH eligible loss produces 16 mETH compensation. |
+| 2:00–2:30 | Settle the approved claim and open its actual successful receipt: payout and Recovery NFT mint share one transaction. |
+| 2:30–3:00 | Provider and public verification: buyer received 16 mETH, provider owns the Recovery NFT, and 4 mETH remains locked. State that this is a testnet prototype. |
+
 1. Buyer: Dashboard and Production Risk → **Buka data privat** → sign login. Show protected exposure and estimated material/product impact.
 2. Registry/detail: inspect A's documents, acknowledgement, and delivery. A new agreement is buyer-submitted, registrar-verified/minted, then activated and updated with delivery evidence.
 3. Protection: inspect the funded NFT. On a new eligible Supply Right, buyer uploads terms and requests coverage; provider records underwriting and fully funds it. Provider Dashboard shows balances, faucet, allowance, deposit, free/locked collateral.
