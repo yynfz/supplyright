@@ -91,7 +91,7 @@ function SidebarFooter() {
         {chainName(chainId)}
       </p>
       <p>{snap.data ? `Blok #${snap.data.blockNumber.toString()}` : snap.isError ? "RPC tidak terjangkau" : "Menghubungkan…"}</p>
-      <p className="pt-1 text-sidebar-foreground/50">Prototipe testnet. Nilai fiktif, tanpa nilai moneter. Belum diaudit.</p>
+      {/* <p className="pt-1 text-sidebar-foreground/50">Prototipe testnet. Nilai fiktif, tanpa nilai moneter. Belum diaudit.</p> */}
     </div>
   );
 }
