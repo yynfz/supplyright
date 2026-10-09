@@ -1,36 +1,46 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SupplyRight web
 
-## Getting Started
+Next.js 15 / React 19 app with TypeScript, Tailwind, wagmi/viem, RainbowKit, React Query, and Supabase. Monetary amounts use 18-decimal mETH; native ETH pays gas.
 
-First, run the development server:
+## Run
+
+```bash
+npm ci
+```
+
+Copy `.env.example` to `.env.local`, apply the Supabase migration described in the [repository README](../README.md), and provide an existing deployment. The server reads numeric JSON files in `../contracts/deployments`. With Foundry output present, `npm run sync:contracts` refreshes ABIs.
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`. Private operations request a wallet login signature; contract writes require wallet confirmation and gas.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Configuration
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Variable | Use |
+| --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | Project API URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only database/private storage access; never expose in browser |
+| `NEXT_PUBLIC_ENABLE_LOCAL_CHAIN` | Local chain enabled unless exactly `false` |
+| `NEXT_PUBLIC_DEFAULT_CHAIN_ID` | `31337` locally or `11155111` on Sepolia |
+| `NEXT_PUBLIC_LOCAL_RPC_URL`, `NEXT_PUBLIC_SEPOLIA_RPC_URL` | Browser RPC endpoints |
+| `LOCAL_RPC_URL`, `SEPOLIA_RPC_URL` | Optional server RPC overrides |
+| `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | Optional WalletConnect project; not required for injected wallets |
+| `NEXT_PUBLIC_LOG_CHUNK_SIZE` | Initial event range, default 20,000 blocks |
+| `CONTRACTS_DEPLOYMENTS_DIR` | Server JSON directory, default `../contracts/deployments` relative to web cwd |
+| `SUPPLYRIGHT_DEPLOYMENTS` | JSON array of deployments; overrides files by chain ID |
 
-## Learn More
+Deployment objects contain `chainId`, `startBlock`, `deployer`, `mockToken`, `settlementToken`, `supplyRightNFT`, `protectionNFT`, `recoveryClaimNFT`, `vault`, and `claimManager`, as written by `Deploy.s.sol`. Preserve the real start block. Public variables are bundled at build time.
 
-To learn more about Next.js, take a look at the following resources:
+For Sepolia hosting: disable local chain, choose default chain 11155111, set an RPC, and provide the actual deployment. The server needs Supabase credentials, not wallet private keys.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Checks and seeding
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm run typecheck
+npm run lint
+npm run build
+```
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+`npm run seed:offchain` reads `.env.local` and imports fictional agreements/documents/dependencies from `../demo`. It defaults to chain 31337 and supports `DEMO_CHAIN_ID` and `DEMO_*_ADDRESS` overrides. Use an isolated demo database: the current seed clears all `dependencies` rows. See the [demo guide](../docs/DEMO.md).
