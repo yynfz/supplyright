@@ -147,4 +147,7 @@
       linear-gradient(to bottom, oklch(1 0 0 / 6%) 1px, transparent 1px);
     background-size: 40px 40px;
   }
+  /* Opt a card out of hover elevation when it's inside an already-elevated surface */
+  .no-lift { transform: none !important; box-shadow: none !important; }
 }
+
