@@ -41,6 +41,10 @@ For Sepolia hosting: disable local chain, choose default chain 11155111, set an 
 npm run typecheck
 npm run lint
 npm run build
+npm test
+npm run test:protocol
 ```
+
+`test:protocol` requires compiled Foundry artifacts (`forge build` in `contracts/`) and Anvil. It starts and stops its own fresh chain on `127.0.0.1:8547`, refusing an occupied port. It executes the supply, protection, verification, and settlement flow, then checks the frontend snapshot/event readers: 16 mETH paid, 4 mETH still locked, and a Recovery Claim NFT owned by the provider. It does not write deployment files or use Supabase. Set `SUPPLYRIGHT_ANVIL_PATH` if Anvil is outside the normal installation path.
 
 `npm run seed:offchain` reads `.env.local` and imports fictional agreements/documents/dependencies from `../demo`. It defaults to chain 31337 and supports `DEMO_CHAIN_ID` and `DEMO_*_ADDRESS` overrides. It upserts known demo PO hashes, material codes, product SKUs, and exact dependency edges, preserving IDs and unrelated records. Document paths use `demo/<chainId>/<filename>`; legacy files remain intact. Use a separate demo project for fictional data. See the [demo guide](../docs/DEMO.md).

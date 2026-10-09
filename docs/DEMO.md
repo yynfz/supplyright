@@ -57,6 +57,8 @@ Admin manages roles and bounded settings; record actions still require the relev
 
 ## Scripted claim alternative
 
+For a standalone integration check, run `forge build` in `contracts/`, then `npm run test:protocol` in `web/`. This starts a fresh Anvil on port 8547 and removes that process afterward. It prints the actual transaction hashes from that disposable chain and verifies the 16 mETH payout, 4 mETH remaining coverage, NFT ownership, and atomic settlement events. These hashes belong to the temporary local chain, not Sepolia.
+
 After the deadline, set `DEMO_STOP_AFTER=submit` or `approve` in `contracts/.env` to finish remaining steps in UI, or leave `settle`:
 
 ```bash
