@@ -17,6 +17,11 @@ RUN npm ci --no-audit --no-fund
 FROM node:22-slim AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
+# BuildKit does NOT include secret contents in the cache key, so a changed .env.local would silently
+# reuse a cached build (leaving stale NEXT_PUBLIC_* values inlined in the client bundle). This stamp
+# comes from the env file's hash (see docker-compose.yml) and busts the cache when it changes.
+ARG NEXT_PUBLIC_ENV_HASH=dev
+ENV NEXT_PUBLIC_ENV_HASH=$NEXT_PUBLIC_ENV_HASH
 COPY --from=deps /app/node_modules ./node_modules
 COPY web/ ./
 # NEXT_PUBLIC_* values are inlined into the client bundle at build time, so the env file has to be

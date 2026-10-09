@@ -5,6 +5,10 @@ services:
       dockerfile: Dockerfile
       secrets:
         - env_local
+      args:
+        # Cache-buster for the inlined NEXT_PUBLIC_* values. Set it from the env file hash when the
+        # environment changes: NEXT_PUBLIC_ENV_HASH=$(sha256sum web/.env.local | cut -c1-16) docker compose build
+        NEXT_PUBLIC_ENV_HASH: ${NEXT_PUBLIC_ENV_HASH:-dev}
     image: supplyright-web:latest
     container_name: supplyright-web
     restart: unless-stopped
@@ -35,6 +39,50 @@ services:
       - "traefik.http.middlewares.supplyright-https.redirectscheme.scheme=https"
       - "traefik.http.middlewares.supplyright-https.redirectscheme.permanent=true"
 
+  # Disposable demo chain: Anvil on chain 31337, state persisted so a restart does not wipe the demo.
+  # Reachable from the host at 127.0.0.1:8545 (loopback only) and publicly at
+  # https://supplyright.mufakat.id/rpc via the traefik router below.
+  supplyright-anvil:
+    image: ghcr.io/foundry-rs/foundry:stable
+    container_name: supplyright-anvil
+    # Docker creates the named volume root-owned, while the image's default user is uid 1000 `foundry`,
+    # so state dumps to /data would silently fail and every restart would wipe the chain. Run as root.
+    user: "0:0"
+    entrypoint: ["/usr/local/bin/anvil"]
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8545"
+      - --chain-id
+      - "31337"
+      - --state
+      - /data/state.json
+      - --state-interval
+      - "15"
+    restart: unless-stopped
+    volumes:
+      - anvil-data:/data
+    ports:
+      # Loopback only: `forge script` and `npm run seed:offchain` run on the host.
+      # Public access must go through traefik so it stays on 443 with the TLS cert.
+      - "127.0.0.1:8545:8545"
+    networks:
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=yayan-cv_default"
+      # Longer rule than the app router, so /rpc wins over the catch-all Host() rule.
+      - "traefik.http.routers.supplyright-rpc.rule=Host(`supplyright.mufakat.id`) && PathPrefix(`/rpc`)"
+      - "traefik.http.routers.supplyright-rpc.entrypoints=websecure"
+      - "traefik.http.routers.supplyright-rpc.tls=true"
+      - "traefik.http.routers.supplyright-rpc.tls.certresolver=letsencrypt"
+      # anvil only answers on "/", so the public path is rewritten onto the root.
+      - "traefik.http.routers.supplyright-rpc.middlewares=supplyright-rpc-path"
+      - "traefik.http.middlewares.supplyright-rpc-path.replacepathregex.regex=^/rpc(/.*)?$"
+      - "traefik.http.middlewares.supplyright-rpc-path.replacepathregex.replacement=/"
+      - "traefik.http.services.supplyright-rpc.loadbalancer.server.port=8545"
+
 networks:
   # Shared edge network where the traefik container lives (compose project: yayan-cv).
   proxy:
@@ -44,3 +92,6 @@ networks:
 secrets:
   env_local:
     file: ./web/.env.local
+
+volumes:
+  anvil-data:
