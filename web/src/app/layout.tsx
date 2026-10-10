@@ -10,6 +10,11 @@ export const metadata: Metadata = {
   title: { default: "SupplyRight — Hak Pasokan Digital", template: "%s · SupplyRight" },
   description:
     "Turning Supply Commitments into Enforceable Digital Rights. Platform B2B untuk tokenisasi hak pasokan, proteksi berdana, dan settlement klaim atomik di Ethereum Sepolia.",
+  icons: {
+    icon: "/supplyright-logo.png",
+    shortcut: "/supplyright-logo.png",
+    apple: "/supplyright-logo.png",
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

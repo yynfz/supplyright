@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -50,7 +51,14 @@ const NAV = [
 function Logo({ dark }: { dark?: boolean }) {
   return (
     <Link href="/" className="flex items-center gap-2">
-      <span className="grid size-8 place-items-center rounded-md bg-teal-500 text-sm font-bold text-white">SR</span>
+      <span
+        className={cn(
+          "grid size-8 place-items-center rounded-md",
+          dark ? "bg-white/10 ring-1 ring-white/10" : "bg-navy",
+        )}
+      >
+        <Image src="/supplyright-logo.png" alt="" width={24} height={24} className="size-6 object-contain" priority />
+      </span>
       <span className={cn("text-base font-semibold tracking-tight", dark ? "text-white" : "text-navy")}>SupplyRight</span>
     </Link>
   );

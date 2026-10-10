@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { ArrowRight, BadgeCheck, Check, Factory, FileCheck2, Landmark, LayoutDashboard, LockKeyhole, Scale, ShieldCheck, Wallet } from "lucide-react";
 
 const journey = [
@@ -25,7 +26,9 @@ export default function Home() {
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-5 sm:px-8">
           <Link href="/" className="flex items-center gap-2.5" aria-label="SupplyRight — beranda">
-            <span className="flex size-9 items-center justify-center rounded-lg bg-navy text-teal-300"><ShieldCheck className="size-5" /></span>
+            <span className="flex size-9 items-center justify-center rounded-lg bg-navy">
+              <Image src="/supplyright-logo.png" alt="" width={28} height={28} className="size-7 object-contain" priority />
+            </span>
             <span className="text-lg font-semibold tracking-tight">SupplyRight<span className="text-teal-600">.</span></span>
           </Link>
           <nav aria-label="Navigasi utama" className="flex items-center gap-5 text-sm">
