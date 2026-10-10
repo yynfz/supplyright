@@ -1,6 +1,6 @@
 # Architecture
 
-The onchain protocol runs on Anvil (31337) or Sepolia (11155111). Settlement uses the chosen 18-decimal **mETH ERC-20**; native ETH pays gas. Next.js uses React, wagmi/viem, RainbowKit, React Query, Tailwind, and Supabase.
+The onchain protocol runs on Anvil (31337) or Sepolia (11155111). Collateral and payouts are **native ETH**, the same asset that pays gas; there is no settlement token. Next.js uses React, wagmi/viem, RainbowKit, React Query, Tailwind, and Supabase.
 
 ```mermaid
 flowchart LR
@@ -18,9 +18,8 @@ flowchart LR
 
 | Contract | Responsibility |
 | --- | --- |
-| `MockETH` | ERC-20 test token, 18 decimals, bounded faucet |
 | `SupplyRightNFT` | Registrar minting, buyer identity, documents, delivery lifecycle |
-| `SupplyProtectionVault` | Free/locked collateral, requests, provider decisions, payout/release |
+| `SupplyProtectionVault` | Native-ETH free/locked collateral, requests, provider decisions, payout/release; refuses plain ETH transfers |
 | `ProtectionNFT` | Vault-issued funded protection terms/status; nontransferable |
 | `SupplyClaimManager` | Evidence, independent decisions, objection/appeal, atomic settlement |
 | `RecoveryClaimNFT` | Settlement-issued recovery record and holder-reported progress |
@@ -29,7 +28,7 @@ Deployment binds counterpart contracts once. Providers fully fund coverage befor
 
 Settlement pays the beneficiary and mints a Recovery NFT to the provider in one transaction. Failure in either step reverts everything. Payout is verified loss × coverage basis points, capped by remaining coverage and locked funds. Deadline passage permits filing; it does not approve claims.
 
-Supabase stores `agreements`, `documents`, `materials`, `products`, and `dependencies`, with bytes in private `supply-documents` storage. Documents use server-side SHA-256. Quantities have 3 implied decimals; mETH has 18. Production disruption estimates are private business inputs, separate from claim verification.
+Supabase stores `agreements`, `documents`, `materials`, `products`, and `dependencies`, with bytes in private `supply-documents` storage. Documents use server-side SHA-256. Quantities have 3 implied decimals; ETH amounts are wei (18). Production disruption estimates are private business inputs, separate from claim verification.
 
 The API authenticates wallet signatures and evaluates onchain roles before using the server-only service-role client. RLS and revoked public table grants protect direct access. Evaluating roles have broad commercial access; buyer access is API-scoped.
 
