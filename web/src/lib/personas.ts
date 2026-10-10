@@ -1,6 +1,7 @@
 import { createConnector } from "wagmi";
 import { getAddress, numberToHex, type Address, type EIP1193RequestFn } from "viem";
-import { LOCAL_CHAIN_ID, localRpcUrl } from "@/lib/chains";
+import { LOCAL_CHAIN_ID, SEPOLIA_CHAIN_ID, localRpcUrl } from "@/lib/chains";
+import { SEPOLIA_WALLETS, type SepoliaRoleKey } from "@/generated/wallets.sepolia";
 
 /**
  * Demo personas for the LOCAL Anvil chain only. They map to Anvil's publicly known dev accounts, which the
@@ -38,42 +39,37 @@ export const PERSONAS = [
   },
 ] as const;
 
-export const SEPOLIA_ROLES = [
-  {
-    id: "sepolia-admin",
-    name: "SupplyRight Admin (Sepolia)",
-    short: "Admin",
-    role: "supplyright-admin",
-    address: getAddress("0x3a570002A98Bbe4cC7A182ccdbb5EF0dc2633CBc"),
-    description: "Validasi dokumen, pencetakan Supply Right, dan administrasi peran.",
-  },
-  {
-    id: "sepolia-buyer",
-    name: "SupplyRight Buyer (Sepolia)",
-    short: "Buyer",
-    role: "supplyright-buyer",
-    address: getAddress("0x6ACF72e4047d26b1C0AA6292BD38B03E9a70580B"),
-    description: "Pendaftaran PO, kepemilikan SupplyRight NFT, pengajuan klaim.",
-  },
-  {
-    id: "sepolia-provider",
-    name: "SupplyRight Provider (Sepolia)",
-    short: "Provider",
-    role: "supplyright-provider",
-    address: getAddress("0xDAB3737215e8BA6b4d18e47b422a52bCfE03e066"),
-    description: "Penyetoran escrow, aktivasi proteksi, penerima Recovery Claim NFT.",
-  },
-  {
-    id: "sepolia-verifier",
-    name: "SupplyRight Verifier (Sepolia)",
-    short: "Verifier",
-    role: "supplyright-verifier",
-    address: getAddress("0x4481A845dFb7855dC1e0946C26965f4a856B12dD"),
-    description: "Verifikasi kegagalan supplier dan persetujuan klaim independen.",
-  },
-] as const;
+const SEPOLIA_ROLE_TEXT: Record<SepoliaRoleKey, { short: string; description: string }> = {
+  admin: { short: "Admin", description: "Validasi dokumen, pencetakan Supply Right, dan administrasi peran." },
+  buyer: { short: "Buyer", description: "Pendaftaran PO, kepemilikan SupplyRight NFT, pengajuan klaim." },
+  provider: { short: "Provider", description: "Penyetoran escrow ETH, aktivasi proteksi, penerima Recovery Claim NFT." },
+  verifier: { short: "Verifier", description: "Verifikasi kegagalan supplier dan persetujuan klaim independen." },
+};
 
-export type Persona = (typeof PERSONAS)[number] | (typeof SEPOLIA_ROLES)[number];
+/**
+ * The four Sepolia role wallets prepared for the demo (public addresses from config/wallets.sepolia.json, via
+ * `npm run sync:contracts`). These are LABELS only: they say which wallet was set up for a role. Authority always
+ * comes from onchain `hasRole` reads (useRoles), and every transaction is signed by the wallet actually connected.
+ */
+export const SEPOLIA_ROLES = (Object.keys(SEPOLIA_ROLE_TEXT) as SepoliaRoleKey[]).flatMap((key) => {
+  const wallet = SEPOLIA_WALLETS.roles[key];
+  if (!wallet.address) return [];
+  return [
+    {
+      id: `sepolia-${key}`,
+      key,
+      name: `${wallet.label} (Sepolia)`,
+      short: SEPOLIA_ROLE_TEXT[key].short,
+      role: wallet.keystoreAlias,
+      address: getAddress(wallet.address),
+      description: SEPOLIA_ROLE_TEXT[key].description,
+    },
+  ];
+});
+
+export type LocalPersona = (typeof PERSONAS)[number];
+export type SepoliaRoleAlias = (typeof SEPOLIA_ROLES)[number];
+export type Persona = LocalPersona | SepoliaRoleAlias;
 
 const storageKey = (id: string) => `supplyright.persona.${id}`;
 
@@ -94,7 +90,28 @@ const forward: EIP1193RequestFn = async ({ method, params }) => {
   return json.result;
 };
 
-export function personaConnector(persona: Persona) {
+const SIGNING_METHODS = new Set([
+  "eth_sendTransaction",
+  "eth_sign",
+  "personal_sign",
+  "eth_signTransaction",
+  "eth_signTypedData",
+  "eth_signTypedData_v3",
+  "eth_signTypedData_v4",
+]);
+
+/**
+ * Personas sign through the node's unlocked accounts, so refuse to talk to any node that is not a 31337 chain
+ * (e.g. a misconfigured NEXT_PUBLIC_LOCAL_RPC_URL pointing at Sepolia). Personas can never act on Sepolia.
+ */
+async function assertLocalNode() {
+  const id = Number(await forward({ method: "eth_chainId" } as never));
+  if (id !== LOCAL_CHAIN_ID) {
+    throw new Error(`Persona demo hanya untuk chain Anvil lokal (${LOCAL_CHAIN_ID}); RPC lokal melaporkan chain ${id}.`);
+  }
+}
+
+export function personaConnector(persona: LocalPersona) {
   const address: Address = persona.address;
   const provider = {
     request: (async ({ method, params }: { method: string; params?: unknown }) => {
@@ -114,6 +131,7 @@ export function personaConnector(persona: Persona) {
           return null;
         }
         default:
+          if (SIGNING_METHODS.has(method)) await assertLocalNode();
           return forward({ method, params } as never);
       }
     }) as EIP1193RequestFn,
@@ -124,6 +142,7 @@ export function personaConnector(persona: Persona) {
     name: `Demo: ${persona.short}`,
     type: "supplyrightPersona",
     async connect() {
+      await assertLocalNode();
       try {
         localStorage.setItem(storageKey(persona.id), "1");
       } catch {}
@@ -162,11 +181,13 @@ export function personaConnector(persona: Persona) {
   }));
 }
 
-export function personaFor(address?: string | null): Persona | undefined {
+/**
+ * Display label for a known address on a given chain: Anvil dev personas on the local chain, configured role
+ * wallets on Sepolia. A label is never authority; use useRoles for that.
+ */
+export function personaFor(address: string | null | undefined, chainId: number): Persona | undefined {
   if (!address) return undefined;
   const lower = address.toLowerCase();
-  return (
-    PERSONAS.find((p) => p.address.toLowerCase() === lower) ||
-    SEPOLIA_ROLES.find((p) => p.address.toLowerCase() === lower)
-  );
+  const list: readonly Persona[] = chainId === LOCAL_CHAIN_ID ? PERSONAS : chainId === SEPOLIA_CHAIN_ID ? SEPOLIA_ROLES : [];
+  return list.find((p) => p.address.toLowerCase() === lower);
 }

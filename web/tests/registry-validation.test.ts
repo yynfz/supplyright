@@ -3,7 +3,7 @@ import test from "node:test";
 import { formatUnits, stringToHex } from "viem";
 import { exactPositiveDecimal, validUnit } from "../src/app/(app)/registry/registry-utils";
 
-test("mETH values retain all 18 decimals and decimal commas are normalized before submission", () => {
+test("ETH values retain all 18 decimals and decimal commas are normalized before submission", () => {
   assert.deepEqual(exactPositiveDecimal(" 16,000000000000000001 ", 18, "Nilai kontrak"), {
     text: "16.000000000000000001",
     value: 16_000_000_000_000_000_001n,
@@ -34,7 +34,7 @@ test("zero, signed numbers, exponent notation, and grouping separators cannot be
   }
 });
 
-test("uint256 limits are checked after scaling for both mETH and quantities", () => {
+test("uint256 limits are checked after scaling for both ETH amounts and quantities", () => {
   const maximum = (1n << 256n) - 1n;
   for (const decimals of [18, 3]) {
     assert.equal(exactPositiveDecimal(formatUnits(maximum, decimals), decimals, "Nilai").value, maximum);

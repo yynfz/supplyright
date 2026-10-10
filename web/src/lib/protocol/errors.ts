@@ -9,7 +9,6 @@ import {
 } from "viem";
 import {
   claimManagerAbi,
-  mockEthAbi,
   protectionNftAbi,
   recoveryClaimNftAbi,
   supplyRightNftAbi,
@@ -24,7 +23,7 @@ import type { ClaimStatus, SupplyStatus } from "./types";
 const ALL_ERRORS: Abi = (() => {
   const seen = new Set<string>();
   const out: AbiItem[] = [];
-  for (const abi of [claimManagerAbi, vaultAbi, supplyRightNftAbi, protectionNftAbi, recoveryClaimNftAbi, mockEthAbi]) {
+  for (const abi of [claimManagerAbi, vaultAbi, supplyRightNftAbi, protectionNftAbi, recoveryClaimNftAbi]) {
     for (const item of abi as readonly AbiItem[]) {
       if (item.type !== "error") continue;
       const key = `${item.name}(${item.inputs.map((i) => i.type).join(",")})`;
@@ -97,9 +96,9 @@ const MESSAGES: Record<string, (args: readonly unknown[]) => string> = {
   ValueTooLarge: () => "Nilai melebihi batas maksimum yang diizinkan.",
   NotHolder: () => "Hanya pemegang Recovery Claim NFT yang dapat memperbarui status pemulihan.",
   InvalidRecoveryUpdate: () => "Pembaruan pemulihan tidak valid (jumlah tidak boleh turun / status final).",
-  FaucetLimitExceeded: () => "Faucet dibatasi 1.000 mETH per transaksi.",
-  ERC20InsufficientBalance: () => "Saldo mETH tidak cukup. Ambil mETH uji dari faucet terlebih dahulu.",
-  ERC20InsufficientAllowance: () => "Allowance mETH ke vault belum cukup. Setujui (approve) terlebih dahulu.",
+  InsufficientBalance: (a) =>
+    `Saldo ETH kontrak tidak cukup untuk transfer: tersedia ${formatToken(a[0] as bigint)}, dibutuhkan ${formatToken(a[1] as bigint)}.`,
+  FailedCall: () => "Transfer ETH ke penerima gagal (alamat penerima menolak ETH).",
   ERC721NonexistentToken: (a) => `Token #${a[0]} tidak ditemukan.`,
 };
 
@@ -132,7 +131,7 @@ export function decodeTxError(err: unknown): DecodedError {
     }
     const msg = err.shortMessage || err.message;
     if (/insufficient funds/i.test(msg)) {
-      return { name: "InsufficientFunds", message: "ETH untuk biaya gas tidak cukup di wallet ini." };
+      return { name: "InsufficientFunds", message: "Saldo ETH wallet tidak cukup untuk nilai transaksi ditambah biaya gas." };
     }
     if (/chain mismatch|does not match the target chain/i.test(msg)) {
       return { name: "ChainMismatch", message: "Jaringan wallet berbeda. Ganti jaringan ke chain aplikasi." };

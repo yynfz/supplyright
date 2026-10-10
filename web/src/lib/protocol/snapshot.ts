@@ -1,7 +1,6 @@
 import type { Address, PublicClient } from "viem";
 import {
   claimManagerAbi,
-  mockEthAbi,
   protectionNftAbi,
   recoveryClaimNftAbi,
   supplyRightNftAbi,
@@ -45,18 +44,15 @@ export async function fetchSnapshot(client: PublicClient, d: Deployment): Promis
     readProtocolPages((from, count) => client.readContract({ blockNumber: block.number, address: d.recoveryClaimNFT, abi: recoveryClaimNftAbi, functionName: "getRecoveryClaims", args: [from, count] })),
   ]);
 
-  const [totalFree, totalLocked, totalPaidOut, settlementDelay, appealWindow, tokenBalance, symbol, decimals, name] =
-    await Promise.all([
-      client.readContract({ blockNumber: block.number, address: d.vault, abi: vaultAbi, functionName: "totalFreeCollateral" }),
-      client.readContract({ blockNumber: block.number, address: d.vault, abi: vaultAbi, functionName: "totalLockedCollateral" }),
-      client.readContract({ blockNumber: block.number, address: d.vault, abi: vaultAbi, functionName: "totalPaidOut" }),
-      client.readContract({ blockNumber: block.number, address: d.claimManager, abi: claimManagerAbi, functionName: "settlementDelay" }),
-      client.readContract({ blockNumber: block.number, address: d.claimManager, abi: claimManagerAbi, functionName: "appealWindow" }),
-      client.readContract({ blockNumber: block.number, address: d.settlementToken, abi: mockEthAbi, functionName: "balanceOf", args: [d.vault] }),
-      client.readContract({ blockNumber: block.number, address: d.settlementToken, abi: mockEthAbi, functionName: "symbol" }),
-      client.readContract({ blockNumber: block.number, address: d.settlementToken, abi: mockEthAbi, functionName: "decimals" }),
-      client.readContract({ blockNumber: block.number, address: d.settlementToken, abi: mockEthAbi, functionName: "name" }),
-    ]);
+  // Collateral is native ETH, so solvency compares the vault's accounted collateral with its ETH balance.
+  const [totalFree, totalLocked, totalPaidOut, settlementDelay, appealWindow, ethBalance] = await Promise.all([
+    client.readContract({ blockNumber: block.number, address: d.vault, abi: vaultAbi, functionName: "totalFreeCollateral" }),
+    client.readContract({ blockNumber: block.number, address: d.vault, abi: vaultAbi, functionName: "totalLockedCollateral" }),
+    client.readContract({ blockNumber: block.number, address: d.vault, abi: vaultAbi, functionName: "totalPaidOut" }),
+    client.readContract({ blockNumber: block.number, address: d.claimManager, abi: claimManagerAbi, functionName: "settlementDelay" }),
+    client.readContract({ blockNumber: block.number, address: d.claimManager, abi: claimManagerAbi, functionName: "appealWindow" }),
+    client.getBalance({ address: d.vault, blockNumber: block.number }),
+  ]);
 
   const ownerOf = (address: Address, abi: typeof supplyRightNftAbi | typeof protectionNftAbi | typeof recoveryClaimNftAbi, id: number) =>
     client
@@ -183,9 +179,8 @@ export async function fetchSnapshot(client: PublicClient, d: Deployment): Promis
     protections,
     claims,
     recoveries,
-    vault: { totalFree, totalLocked, totalPaidOut, tokenBalance },
+    vault: { totalFree, totalLocked, totalPaidOut, ethBalance },
     settings: { settlementDelay: Number(settlementDelay), appealWindow: Number(appealWindow) },
-    token: { symbol, decimals: Number(decimals), name },
   };
 }
 

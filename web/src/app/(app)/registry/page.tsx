@@ -51,7 +51,7 @@ function CreateAgreementForm({ onCreated }: { onCreated: (agreement: Agreement) 
     { key: "materialCode", label: "Kode material", max: 40 },
     { key: "quantity", label: "Kuantitas pesanan (maks. 3 desimal)", placeholder: "50" },
     { key: "unit", label: "Satuan (maks. 8 karakter)", max: 8, placeholder: "MT" },
-    { key: "contractValue", label: "Nilai kontrak (mETH, maks. 18 desimal)", placeholder: "10" },
+    { key: "contractValue", label: "Nilai kontrak (ETH, maks. 18 desimal)", placeholder: "0.05" },
     { key: "deliveryDeadline", label: "Batas pengiriman (waktu lokal browser)", type: "datetime-local" },
   ];
   return (
@@ -163,7 +163,7 @@ function AgreementPanel({ agreement, unlocked }: { agreement: Agreement; unlocke
           <Field label="Pembeli">{row.buyer_name}<div className="mt-1"><AddressChip address={row.buyer_address} /></div></Field>
           <Field label="Pemasok">{row.supplier_name} · {row.supplier_ref}</Field>
           <Field label="Pesanan">{row.quantity} {row.unit} · {row.material_code}</Field>
-          <Field label="Nilai kontrak">{row.contract_value} mETH</Field>
+          <Field label="Nilai kontrak">{row.contract_value} ETH</Field>
           <Field label="Batas pengiriman">{formatDateTime(Date.parse(row.delivery_deadline) / 1000)}</Field>
           <Field label="Incoterms">{row.incoterms || "—"}</Field>
         </dl>

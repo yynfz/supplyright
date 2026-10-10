@@ -33,7 +33,7 @@ function rejectsField(field: keyof typeof payload, value: unknown) {
   if (!result.success) assert.ok(result.error.issues.some((issue) => issue.path[0] === field));
 }
 
-test("the API accepts a complete mintable payload without losing exact mETH decimals", () => {
+test("the API accepts a complete mintable payload without losing exact ETH (wei) decimals", () => {
   const accepted = createAgreementSchema.parse(payload);
   assert.equal(accepted.contractValue, "16.000000000000000001");
   assert.equal(accepted.quantity, "50.125");

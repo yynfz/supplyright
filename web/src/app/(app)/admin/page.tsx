@@ -91,7 +91,7 @@ export default function AdminPage() {
         </Card>
       </div>
       <TxStatus state={tx.state} className="mt-4" />
-      <Card className="mt-6"><CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck className="size-4" /> Alamat kontrak aktif</CardTitle><CardDescription>Alamat berasal dari konfigurasi deployment; pencatatan NFT dan nilai mETH dapat diverifikasi publik.</CardDescription></CardHeader><CardContent><dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{Object.entries(CONTRACT_LABELS).map(([key, label]) => <Field key={key} label={label}><AddressChip address={deployment[key as keyof typeof CONTRACT_LABELS] as Address} /></Field>)}</dl></CardContent></Card>
+      <Card className="mt-6"><CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck className="size-4" /> Alamat kontrak aktif</CardTitle><CardDescription>Alamat berasal dari konfigurasi deployment; pencatatan NFT dan escrow ETH di vault dapat diverifikasi publik.</CardDescription></CardHeader><CardContent><dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{Object.entries(CONTRACT_LABELS).map(([key, label]) => <Field key={key} label={label}><AddressChip address={deployment[key as keyof typeof CONTRACT_LABELS] as Address} /></Field>)}</dl></CardContent></Card>
       <Card className="mt-6"><CardHeader><CardTitle>Riwayat administrasi onchain</CardTitle></CardHeader><CardContent><AuditTimeline filter={(event) => ["RoleGranted", "RoleRevoked", "SettlementDelayUpdated", "AppealWindowUpdated"].includes(event.name)} /></CardContent></Card>
     </>}
   </>;

@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Clock, Coins, Loader2, PlugZap, ShieldAlert, Wallet } from "lucide-react";
+import { AlertTriangle, Clock, Loader2, PlugZap, ShieldAlert, Wallet } from "lucide-react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
@@ -8,11 +8,8 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/page";
 import { NO_ROLES, useActiveChain, useBalances, useRoles, type RoleFlags } from "@/hooks/use-protocol";
-import { useProtocolTx } from "@/hooks/use-protocol-tx";
-import { mockEthAbi } from "@/generated/abis";
-import { chainName, localRpcUrl } from "@/lib/chains";
+import { chainName, localRpcUrl, supportedChains } from "@/lib/chains";
 import { ROLE_LABELS, type RoleKey } from "@/lib/protocol/labels";
-import { parseToken } from "@/lib/format";
 
 /** Banner when the active chain has no deployment or the wallet is on an unsupported network. */
 export function NetworkBanner() {
@@ -21,8 +18,9 @@ export function NetworkBanner() {
   if (wrongNetwork) {
     return (
       <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
-        <AlertTriangle className="size-4" />
-        Wallet terhubung ke jaringan yang tidak didukung. Ganti ke Sepolia atau Anvil lokal.
+        <AlertTriangle className="size-4 shrink-0" />
+        Wallet terhubung ke jaringan yang tidak didukung. Ganti ke {supportedChains.map((c) => c.name).join(" atau ")}. Data di bawah
+        dibaca dari {chainName(chainId)}; ganti jaringan sebelum mengirim transaksi.
       </div>
     );
   }
@@ -81,32 +79,6 @@ export function RoleGate({
     );
   }
   return <>{children({ roles: flags })}</>;
-}
-
-/** MockETH faucet for test collateral (no monetary value). */
-export function FaucetButton({ amount = "100", size = "sm" }: { amount?: string; size?: "sm" | "default" }) {
-  const { deployment } = useActiveChain();
-  const { send, busy } = useProtocolTx();
-  if (!deployment?.mockToken) return null;
-  return (
-    <Button
-      variant="outline"
-      size={size}
-      disabled={busy}
-      onClick={() =>
-        send({
-          label: `Faucet ${amount} mETH uji`,
-          address: deployment.settlementToken,
-          abi: mockEthAbi,
-          functionName: "faucet",
-          args: [parseToken(amount)],
-        })
-      }
-    >
-      <Coins className="size-4" />
-      Ambil {amount} mETH uji
-    </Button>
-  );
 }
 
 export function useWalletBalances() {

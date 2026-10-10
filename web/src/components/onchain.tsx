@@ -11,7 +11,7 @@ import { personaFor } from "@/lib/personas";
 import { useActiveChain } from "@/hooks/use-protocol";
 import { cn } from "@/lib/utils";
 
-function CopyButton({ value }: { value: string }) {
+export function CopyButton({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
@@ -31,12 +31,12 @@ function CopyButton({ value }: { value: string }) {
   );
 }
 
-/** Address with copy button, persona/role label on the local chain, and Etherscan link on Sepolia. */
+/** Address with copy button, a display-only persona / role-wallet label for the active chain, and Etherscan link on Sepolia. */
 export function AddressChip({ address, label, className }: { address?: Address | string | null; label?: string; className?: string }) {
   const { chainId } = useActiveChain();
   if (!address || isZeroAddress(address)) return <span className="text-muted-foreground">-</span>;
   const link = addressUrl(chainId, address);
-  const persona = personaFor(address);
+  const persona = personaFor(address, chainId);
   const text = (
     <span className="font-mono text-xs">{shortAddress(address)}</span>
   );
@@ -93,11 +93,11 @@ export function TxLink({ hash, chainId: chainOverride, children, className }: { 
   );
   const cls = cn("inline-flex items-center gap-1 text-teal-700 hover:underline", className);
   return link.external ? (
-    <a href={link.href} target="_blank" rel="noopener noreferrer" className={cls}>
+    <a href={link.href} target="_blank" rel="noopener noreferrer" className={cls} title={hash}>
       {content}
     </a>
   ) : (
-    <Link href={link.href} className={cls}>
+    <Link href={link.href} className={cls} title={hash}>
       {content}
     </Link>
   );

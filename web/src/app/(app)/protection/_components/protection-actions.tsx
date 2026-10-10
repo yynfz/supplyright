@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useAccount, usePublicClient } from "wagmi";
-import { parseUnits, zeroAddress, type Address } from "viem";
+import { parseUnits, zeroAddress } from "viem";
 import { toast } from "sonner";
-import { vaultAbi, mockEthAbi } from "@/generated/abis";
+import { vaultAbi } from "@/generated/abis";
 import { useProtocolTx } from "@/hooks/use-protocol-tx";
 import { useActiveChain, useBalances, useProtocolSnapshot, useRoles } from "@/hooks/use-protocol";
 import { useCreateTextDocument, useDocumentIndex } from "@/hooks/use-offchain";
@@ -57,23 +57,8 @@ export function usePageTransactions() {
 
 export type PageTransactions = ReturnType<typeof usePageTransactions>;
 
-/** Check allowance against the live chain, and advance only after a successful approval receipt. */
-export async function ensureVaultAllowance(
-  client: NonNullable<ReturnType<typeof usePublicClient>>,
-  token: Address,
-  vault: Address,
-  account: Address,
-  amount: bigint,
-  tx: PageTransactions["tx"],
-) {
-  const allowance = await client.readContract({ address: token, abi: mockEthAbi, functionName: "allowance", args: [account, vault] });
-  if (allowance >= amount) return true;
-  const receipt = await tx.send({ label: "Izinkan transfer mETH ke vault", address: token, abi: mockEthAbi, functionName: "approve", args: [vault, amount] });
-  if (!receipt) return false;
-  const confirmed = await client.readContract({ address: token, abi: mockEthAbi, functionName: "allowance", args: [account, vault] });
-  if (confirmed < amount) throw new Error("Allowance setelah konfirmasi belum mencukupi.");
-  return true;
-}
+/** ETH the provider must send with fundAndApproveProtection: coverage not yet covered by free collateral (floor 0). */
+export const fundingShortfall = (coverage: bigint, free: bigint) => (coverage > free ? coverage - free : 0n);
 
 export function ProtectionRequests({ requests, unlocked, actions, emptyTitle = "Belum ada permintaan proteksi" }: {
   requests: ProtectionRequest[];
@@ -103,21 +88,28 @@ export function ProtectionRequests({ requests, unlocked, actions, emptyTitle = "
       throw new Error("Wallet ini bukan provider yang dapat memutuskan permintaan tersebut.");
     }
     if (approve && sameAccount(r.buyer, address)) throw new Error("Buyer tidak dapat memberi proteksi kepada dirinya sendiri.");
+    // Shortfall and wallet ETH are read live from chain (cached balances may be stale).
+    const liveShortfall = async () => {
+      const free = await client.readContract({ address: deployment.vault, abi: vaultAbi, functionName: "freeCollateral", args: [address] });
+      const shortfall = fundingShortfall(r.coverageAmount, free);
+      if (shortfall > 0n) {
+        const eth = await client.getBalance({ address });
+        if (eth < shortfall) throw new Error(`Saldo ETH wallet kurang ${formatToken(shortfall - eth)} untuk menutup kekurangan collateral ${formatToken(shortfall)}, belum termasuk gas.`);
+      }
+      return shortfall;
+    };
+    if (approve) await liveShortfall(); // fail before storing the memo
     const document = await memo.mutateAsync({ kind: "UNDERWRITING_MEMO", title: `${approve ? "Persetujuan" : "Penolakan"} proteksi #${r.id}`, content, contextKey: contextKey("request", chainId, r.id) });
     if (!approve) {
       await tx.send({ label: `Tolak permintaan #${r.id}`, address: deployment.vault, abi: vaultAbi, functionName: "rejectRequest", args: [BigInt(r.id), document.sha256] });
       return;
     }
-    const free = await client.readContract({ address: deployment.vault, abi: vaultAbi, functionName: "freeCollateral", args: [address] });
-    if (free >= r.coverageAmount) {
+    const shortfall = await liveShortfall(); // again, right before signing
+    if (shortfall === 0n) {
       await tx.send({ label: `Aktifkan proteksi permintaan #${r.id}`, address: deployment.vault, abi: vaultAbi, functionName: "approveProtection", args: [BigInt(r.id), document.sha256] });
       return;
     }
-    const shortfall = r.coverageAmount - free;
-    const token = await client.readContract({ address: deployment.settlementToken, abi: mockEthAbi, functionName: "balanceOf", args: [address] });
-    if (token < shortfall) throw new Error(`Saldo wallet kurang ${formatToken(shortfall - token)}. Ambil token demo atau tambah saldo terlebih dahulu.`);
-    if (!await ensureVaultAllowance(client, deployment.settlementToken, deployment.vault, address, shortfall, tx)) return;
-    await tx.send({ label: `Danai & aktifkan proteksi #${r.id}`, address: deployment.vault, abi: vaultAbi, functionName: "fundAndApproveProtection", args: [BigInt(r.id), document.sha256] });
+    await tx.send({ label: `Danai & aktifkan proteksi #${r.id}`, address: deployment.vault, abi: vaultAbi, functionName: "fundAndApproveProtection", args: [BigInt(r.id), document.sha256], value: shortfall });
   });
 
   if (!requests.length) return <EmptyState title={emptyTitle} />;
@@ -130,7 +122,7 @@ export function ProtectionRequests({ requests, unlocked, actions, emptyTitle = "
       const right = snapshot.data?.supplyRights.find(sr => sr.id === r.supplyRightId);
       const expired = now >= r.expiresAt;
       const eligible = right && [SupplyStatus.Registered, SupplyStatus.Active].includes(right.status) && !right.protectionId && sameAccount(right.owner, r.buyer);
-      const shortfall = r.coverageAmount > (balances.data?.free ?? 0n) ? r.coverageAmount - (balances.data?.free ?? 0n) : 0n;
+      const shortfall = fundingShortfall(r.coverageAmount, balances.data?.free ?? 0n);
       return <Card key={r.id}>
         <CardHeader className="pb-3"><div className="flex flex-wrap items-center justify-between gap-2"><CardTitle>Permintaan #{r.id} · <Link href={`/supply/${r.supplyRightId}`} className="text-teal-700 hover:underline">SR #{r.supplyRightId}</Link></CardTitle><StatusBadge {...label} /></div></CardHeader>
         <CardContent className="space-y-4">
@@ -149,7 +141,7 @@ export function ProtectionRequests({ requests, unlocked, actions, emptyTitle = "
           {pending && providerAllowed && <div className="space-y-2 rounded-lg bg-slate-50 p-3">
             <label htmlFor={`underwriting-${r.id}`} className="text-sm font-medium">Memo underwriting / alasan penolakan</label>
             <Textarea id={`underwriting-${r.id}`} value={notes[r.id] ?? ""} onChange={e => setNotes(previous => ({ ...previous, [r.id]: e.target.value }))} placeholder="Hasil penilaian risiko dan dasar keputusan…" disabled={busy || !unlocked} />
-            {expired ? <p className="text-xs text-rose-700">Permintaan telah kedaluwarsa. Buyer dapat membatalkan lalu membuat permintaan baru.</p> : !eligible ? <p className="text-xs text-amber-700">Supply Right saat ini tidak memenuhi syarat aktivasi.</p> : <p className="text-xs text-muted-foreground">{shortfall > 0n ? `Vault akan menarik kekurangan ${formatToken(shortfall)} dari wallet setelah allowance dikonfirmasi.` : "Seluruh coverage akan dikunci dari collateral bebas."} Protection NFT diterbitkan oleh kontrak saat aktivasi.</p>}
+            {expired ? <p className="text-xs text-rose-700">Permintaan telah kedaluwarsa. Buyer dapat membatalkan lalu membuat permintaan baru.</p> : !eligible ? <p className="text-xs text-amber-700">Supply Right saat ini tidak memenuhi syarat aktivasi.</p> : <p className="text-xs text-muted-foreground">{shortfall > 0n ? `Transaksi aktivasi mengirim kekurangan ${formatToken(shortfall)} dari wallet ke vault (ETH native, dihitung ulang dari chain saat dikirim), lalu mengunci seluruh coverage.` : "Seluruh coverage akan dikunci dari collateral bebas; tidak ada ETH yang dikirim."} Protection NFT diterbitkan oleh kontrak saat aktivasi.</p>}
             {!unlocked && <p className="text-xs text-muted-foreground">Buka data privat untuk menyimpan memo keputusan.</p>}
             <div className="flex flex-wrap gap-2"><Button size="sm" disabled={busy || !unlocked || !notes[r.id]?.trim() || expired || !eligible || sameAccount(r.buyer, address) || wrongNetwork || !client} onClick={() => decide(r, true)}>{shortfall > 0n ? "Danai & setujui" : "Setujui proteksi"}</Button><Button size="sm" variant="outline" disabled={busy || !unlocked || !notes[r.id]?.trim() || wrongNetwork || !client} onClick={() => decide(r, false)}>Tolak permintaan</Button></div>
           </div>}

@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAccount, usePublicClient } from "wagmi";
 import type { Address } from "viem";
-import { claimManagerAbi, mockEthAbi, supplyRightNftAbi, vaultAbi } from "@/generated/abis";
+import { claimManagerAbi, supplyRightNftAbi, vaultAbi } from "@/generated/abis";
 import { LOCAL_CHAIN_ID, defaultChainId, isSupportedChain } from "@/lib/chains";
 import type { AppConfig, Deployment } from "@/lib/deployments";
 import { fetchSnapshot } from "@/lib/protocol/snapshot";
@@ -118,7 +118,7 @@ export function useRoles(address?: Address) {
   });
 }
 
-/** Wallet balances relevant to the protocol: native ETH (gas), mETH, vault free/locked collateral, allowance. */
+/** Native ETH in the wallet (collateral source and gas) and the address's free / locked collateral in the vault. */
 export function useBalances(address?: Address) {
   const { chainId, deployment, isLocal } = useActiveChain();
   const client = usePublicClient({ chainId });
@@ -128,14 +128,12 @@ export function useBalances(address?: Address) {
     refetchInterval: isLocal ? 5_000 : 15_000,
     queryFn: async () => {
       const d = deployment!;
-      const [eth, token, allowance, free, locked] = await Promise.all([
+      const [eth, free, locked] = await Promise.all([
         client!.getBalance({ address: address! }),
-        client!.readContract({ address: d.settlementToken, abi: mockEthAbi, functionName: "balanceOf", args: [address!] }),
-        client!.readContract({ address: d.settlementToken, abi: mockEthAbi, functionName: "allowance", args: [address!, d.vault] }),
         client!.readContract({ address: d.vault, abi: vaultAbi, functionName: "freeCollateral", args: [address!] }),
         client!.readContract({ address: d.vault, abi: vaultAbi, functionName: "lockedCollateral", args: [address!] }),
       ]);
-      return { eth, token, allowance, free, locked };
+      return { eth, free, locked };
     },
   });
 }

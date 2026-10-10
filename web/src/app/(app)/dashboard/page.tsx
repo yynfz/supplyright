@@ -161,13 +161,13 @@ export default function DashboardPage() {
                 <dd className="tabular font-semibold">{formatToken(snap?.vault.totalPaidOut)}</dd>
               </div>
               <div>
-                <dt className="text-xs text-muted-foreground">Saldo vault</dt>
-                <dd className="tabular font-semibold">{formatToken(snap?.vault.tokenBalance)}</dd>
+                <dt className="text-xs text-muted-foreground">Saldo ETH vault</dt>
+                <dd className="tabular font-semibold">{formatToken(snap?.vault.ethBalance)}</dd>
               </div>
             </dl>
             <div className="rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
               <Gauge className="mb-1 size-4 text-teal-600" />
-              Invarian vault: saldo token ≥ collateral bebas + terkunci. Admin tidak memiliki fungsi penarikan.
+              Invarian vault: saldo ETH native vault ≥ collateral bebas + terkunci. Admin tidak memiliki fungsi penarikan.
             </div>
           </CardContent>
         </Card>

@@ -175,11 +175,11 @@ export type ProtocolSnapshot = {
     totalFree: bigint;
     totalLocked: bigint;
     totalPaidOut: bigint;
-    tokenBalance: bigint;
+    /** Native ETH held by the vault at the snapshot block; must be >= totalFree + totalLocked. */
+    ethBalance: bigint;
   };
   settings: {
     settlementDelay: number;
     appealWindow: number;
   };
-  token: { symbol: string; decimals: number; name: string };
 };

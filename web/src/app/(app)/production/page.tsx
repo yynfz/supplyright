@@ -321,7 +321,7 @@ export default function ProductionRiskPage() {
                           )}
                         </TableCell>
                         <TableCell className="tabular text-right">
-                          {prodExposure ? `${prodExposure.toLocaleString("id-ID")} mETH` : "-"}
+                          {prodExposure ? `${prodExposure.toLocaleString("id-ID")} ETH` : "-"}
                         </TableCell>
                         {canEdit && (
                           <TableCell className="text-right">

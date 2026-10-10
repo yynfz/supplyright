@@ -1,4 +1,4 @@
-/** Rows of the private Supabase tables (see supabase/migrations). Amounts are decimal strings in mETH. */
+/** Rows of the private Supabase tables (see supabase/migrations). Amounts are decimal strings in ETH (native, 18 decimals). */
 
 export type AgreementStatus = "SUBMITTED" | "VERIFIED" | "MINTED" | "REJECTED";
 

@@ -5,23 +5,29 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  AlertTriangle,
   BadgeCheck,
   ChevronDown,
+  ExternalLink,
   Factory,
   FileStack,
   Landmark,
   LayoutDashboard,
   Menu,
   Scale,
+  Loader2,
   Settings,
   ShieldCheck,
   UserRound,
+  Wallet,
 } from "lucide-react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAccount, useConnect, useDisconnect } from "wagmi";
+import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { CopyButton } from "@/components/onchain";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,9 +37,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { DevTimeControls, NetworkBanner } from "@/components/guards";
-import { useActiveChain, useProtocolSnapshot, useRoles } from "@/hooks/use-protocol";
+import { useActiveChain, useBalances, useProtocolSnapshot, useRoles } from "@/hooks/use-protocol";
 import { PERSONAS, personaFor } from "@/lib/personas";
-import { chainName, localChainEnabled } from "@/lib/chains";
+import { LOCAL_CHAIN_ID, addressUrl, chainName, isSupportedChain, localChainEnabled, supportedChains } from "@/lib/chains";
+import { formatEth } from "@/lib/format";
+import type { SepoliaRoleKey } from "@/generated/wallets.sepolia";
 import { ROLE_LABELS, type RoleKey } from "@/lib/protocol/labels";
 import { cn } from "@/lib/utils";
 
@@ -110,7 +118,7 @@ function PersonaSwitcher() {
   const { disconnectAsync } = useDisconnect();
   const { isLocal } = useActiveChain();
   if (!localChainEnabled || !isLocal) return null;
-  const current = personaFor(address);
+  const current = personaFor(address, LOCAL_CHAIN_ID);
   const choose = async (id: string) => {
     const target = connectors.find((c) => c.id === id);
     if (!target) return;
@@ -146,79 +154,189 @@ function PersonaSwitcher() {
   );
 }
 
-import { useBalances } from "@/hooks/use-protocol";
-import { formatEth, formatToken, shortAddress } from "@/lib/format";
-import { addressUrl } from "@/lib/chains";
-import { ExternalLink, Wallet } from "lucide-react";
+const ROLE_SHORT: Record<RoleKey, string> = {
+  admin: "Admin",
+  registrar: "Registrar",
+  buyer: "Buyer",
+  provider: "Provider",
+  verifier: "Verifier",
+};
 
-function ConnectedRoleOverview() {
-  const { address } = useAccount();
-  const { chainId } = useActiveChain();
-  const { data: roles } = useRoles(address);
-  const { data: balances } = useBalances(address);
-  const persona = personaFor(address);
+/** Which onchain role a configured Sepolia role wallet is expected to hold (used only to flag a mismatch). */
+const ALIAS_ROLE: Record<SepoliaRoleKey, RoleKey> = { admin: "admin", buyer: "buyer", provider: "provider", verifier: "verifier" };
 
-  if (!address) return null;
-
-  const etherscan = addressUrl(chainId, address);
-  const roleName = persona?.short || (roles?.admin ? "Admin" : roles?.buyer ? "Buyer" : roles?.provider ? "Provider" : roles?.verifier ? "Verifier" : null);
-
+function PanelRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="hidden items-center gap-2 rounded-md border bg-slate-50 px-2.5 py-1 text-xs text-slate-700 md:flex">
-      <div className="flex items-center gap-1.5 font-medium">
-        <Wallet className="size-3.5 text-teal-600" />
-        {roleName && (
-          <span className="rounded bg-teal-100 px-1.5 py-0.2 text-[10px] font-semibold text-teal-900">
-            {roleName}
-          </span>
-        )}
-        {etherscan ? (
-          <a
-            href={etherscan.href}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-0.5 font-mono text-[11px] text-slate-800 hover:text-teal-700 hover:underline"
-          >
-            {shortAddress(address)}
-            <ExternalLink className="size-2.5" />
-          </a>
-        ) : (
-          <span className="font-mono text-[11px]">{shortAddress(address)}</span>
-        )}
-      </div>
-
-      {balances && (
-        <div className="flex items-center gap-2 border-l border-slate-200 pl-2 text-[11px]">
-          <span>
-            ETH: <strong className="font-semibold text-slate-900">{formatEth(balances.eth, { digits: 3 })}</strong>
-          </span>
-          {balances.locked > 0n && (
-            <span>
-              Escrow: <strong className="font-semibold text-teal-700">{formatToken(balances.locked, { digits: 3 })}</strong>
-            </span>
-          )}
-        </div>
-      )}
+    <div className="flex items-baseline justify-between gap-3 text-xs">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="text-right font-medium tabular-nums text-navy">{children}</dd>
     </div>
   );
 }
 
-function RoleChips() {
-  const { address } = useAccount();
-  const { data } = useRoles(address);
-  if (!address || !data) return null;
-  const keys = (Object.keys(data) as RoleKey[]).filter((k) => data[k]);
-  if (!keys.length) {
-    return <span className="hidden text-xs text-muted-foreground lg:inline">Tanpa peran</span>;
-  }
+/**
+ * Connected-wallet panel. Everything shown comes from the connected wallet (wagmi) and public chain reads:
+ * roles from onchain hasRole (useRoles), balances from the RPC, NFT ownership from the protocol snapshot.
+ * The configured alias is a label only and never unlocks an action; actions stay gated by onchain roles and are
+ * signed by this wallet.
+ */
+function ConnectedWalletPanel() {
+  const { address, chainId: walletChainId } = useAccount();
+  const { chainId, wrongNetwork, deployment } = useActiveChain();
+  const { switchChain, isPending: switching } = useSwitchChain();
+  const roles = useRoles(address);
+  const balances = useBalances(address);
+  const snap = useProtocolSnapshot();
+
+  if (!address) return null;
+
+  const etherscan = addressUrl(chainId, address);
+  const alias = personaFor(address, chainId);
+  const aliasKey = alias && "key" in alias ? alias.key : undefined;
+  const heldRoles = roles.data ? (Object.keys(roles.data) as RoleKey[]).filter((k) => roles.data![k]) : [];
+  const aliasMismatch = !!roles.data && !!aliasKey && !roles.data[ALIAS_ROLE[aliasKey]];
+  const same = (a?: string | null) => !!a && a.toLowerCase() === address.toLowerCase();
+  const owned = snap.data
+    ? {
+        rights: snap.data.supplyRights.filter((r) => same(r.owner)).length,
+        protections: snap.data.protections.filter((p) => same(p.nftOwner)).length,
+        recoveries: snap.data.recoveries.filter((r) => same(r.owner)).length,
+      }
+    : null;
+  const showCollateral = !!roles.data?.provider || (!!balances.data && (balances.data.free > 0n || balances.data.locked > 0n));
+  const summary = wrongNetwork
+    ? "Jaringan salah"
+    : roles.isLoading
+      ? "Memeriksa…"
+      : heldRoles.length
+        ? `${ROLE_SHORT[heldRoles.includes("admin") ? "admin" : heldRoles[0]]}${heldRoles.length > 1 ? ` +${heldRoles.length - 1}` : ""}`
+        : "Tanpa peran";
+
   return (
-    <div className="hidden items-center gap-1 xl:flex">
-      {keys.map((k) => (
-        <span key={k} className="rounded-full bg-teal-50 px-2 py-0.5 text-[11px] font-medium text-teal-800 ring-1 ring-teal-200">
-          {ROLE_LABELS[k]}
-        </span>
-      ))}
-    </div>
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm" className="gap-1.5 px-2 sm:px-3" aria-label={`Detail wallet terhubung: ${summary}`}>
+          {wrongNetwork ? <AlertTriangle className="size-4 text-amber-600" /> : <Wallet className="size-4 text-teal-600" />}
+          <span
+            className={cn(
+              "hidden rounded px-1.5 py-0.5 text-[10px] font-semibold sm:inline",
+              wrongNetwork ? "bg-amber-100 text-amber-900" : heldRoles.length ? "bg-teal-100 text-teal-900" : "bg-slate-100 text-slate-600",
+            )}
+          >
+            {summary}
+          </span>
+          <span className="hidden text-xs tabular-nums text-slate-700 lg:inline">{formatEth(balances.data?.eth, { digits: 3 })}</span>
+          <ChevronDown className="hidden size-3.5 sm:block" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-[min(22rem,calc(100vw-2rem))] gap-3 p-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Wallet terhubung</p>
+          <p className="mt-1 flex items-start gap-1.5 font-mono text-xs break-all text-navy">
+            {address}
+            <CopyButton value={address} />
+          </p>
+          {etherscan && (
+            <a href={etherscan.href} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex items-center gap-1 text-xs text-teal-700 hover:underline">
+              Lihat di Sepolia Etherscan <ExternalLink className="size-3" />
+            </a>
+          )}
+        </div>
+
+        <div className="rounded-md border p-2.5 text-xs">
+          <p className="flex items-center justify-between gap-2">
+            <span className="text-muted-foreground">Jaringan wallet</span>
+            <span className={cn("font-medium", wrongNetwork ? "text-amber-700" : "text-navy")}>
+              {walletChainId === undefined ? "-" : isSupportedChain(walletChainId) ? chainName(walletChainId) : `Chain ${walletChainId} (tidak didukung)`}
+            </span>
+          </p>
+          {wrongNetwork ? (
+            <div className="mt-2 space-y-2 rounded bg-amber-50 p-2 text-amber-900">
+              <p className="flex items-start gap-1.5">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                Jaringan ini tidak didukung. Data di bawah dibaca dari {chainName(chainId)}; ganti jaringan wallet sebelum mengirim transaksi.
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {supportedChains.map((c) => (
+                  <Button key={c.id} size="xs" variant="outline" disabled={switching} onClick={() => switchChain({ chainId: c.id })}>
+                    Ganti ke {c.name}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            !deployment && <p className="mt-1 text-rose-700">Kontrak SupplyRight belum di-deploy di {chainName(chainId)}.</p>
+          )}
+        </div>
+
+        <div>
+          <p className="mb-1.5 text-xs font-semibold text-navy">Peran onchain</p>
+          {!deployment ? (
+            <p className="text-xs text-muted-foreground">Tidak ada kontrak untuk dibaca.</p>
+          ) : roles.isLoading ? (
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Loader2 className="size-3.5 animate-spin" />
+              Membaca hasRole…
+            </p>
+          ) : roles.error ? (
+            <p className="text-xs text-rose-700">Gagal membaca peran: {(roles.error as Error).message}</p>
+          ) : heldRoles.length ? (
+            <div className="flex flex-wrap gap-1">
+              {heldRoles.map((k) => (
+                <span key={k} className="rounded-full bg-teal-50 px-2 py-0.5 text-[11px] font-medium text-teal-800 ring-1 ring-teal-200">
+                  {ROLE_LABELS[k]}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">Wallet ini belum memiliki peran SupplyRight onchain. Data publik tetap dapat dibaca; tindakan memerlukan peran.</p>
+          )}
+          <p className="mt-1.5 text-[11px] text-muted-foreground">Dibaca langsung dari kontrak di {chainName(chainId)} (hasRole). Hanya peran onchain yang membuka tindakan.</p>
+          {alias && (
+            <p className="mt-1.5 text-[11px] text-muted-foreground">
+              Alias konfigurasi: <span className="font-mono">{"role" in alias ? alias.role : alias.id}</span> ({alias.short}) · label saja, bukan otorisasi.
+              {aliasMismatch && <span className="mt-0.5 block text-amber-700">Peran {alias.short} untuk alias ini belum diberikan onchain.</span>}
+            </p>
+          )}
+        </div>
+
+        <dl className="space-y-1.5 border-t pt-3">
+          <PanelRow label="Saldo ETH wallet">{balances.isLoading ? "…" : formatEth(balances.data?.eth)}</PanelRow>
+          {showCollateral && (
+            <>
+              <PanelRow label="Collateral bebas di vault">{formatEth(balances.data?.free)}</PanelRow>
+              <PanelRow label="Collateral terkunci di vault">{formatEth(balances.data?.locked)}</PanelRow>
+            </>
+          )}
+          <PanelRow label="Total escrow vault">{snap.isLoading ? "…" : formatEth(snap.data?.vault.ethBalance)}</PanelRow>
+        </dl>
+
+        <div className="border-t pt-3">
+          <p className="mb-1.5 text-xs font-semibold text-navy">NFT milik wallet ini</p>
+          {owned ? (
+            <dl className="grid grid-cols-3 gap-2 text-center">
+              {[
+                { label: "SupplyRight", value: owned.rights },
+                { label: "Protection", value: owned.protections },
+                { label: "Recovery Claim", value: owned.recoveries },
+              ].map((n) => (
+                <div key={n.label} className="flex flex-col-reverse rounded-md bg-slate-50 p-2">
+                  <dt className="text-[10px] text-muted-foreground">{n.label}</dt>
+                  <dd className="text-base font-semibold tabular-nums text-navy">{n.value}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            <p className="text-xs text-muted-foreground">{snap.isError ? "Gagal membaca kontrak." : deployment ? "Membaca kontrak…" : "-"}</p>
+          )}
+          {snap.data && (
+            <p className="mt-1.5 text-[11px] text-muted-foreground">
+              Per blok #{snap.data.blockNumber.toString()} · {chainName(chainId)}
+            </p>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -259,10 +377,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <DevTimeControls />
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <RoleChips />
-            <ConnectedRoleOverview />
+            <ConnectedWalletPanel />
             <PersonaSwitcher />
-            <ConnectButton chainStatus="icon" showBalance={false} accountStatus={{ smallScreen: "avatar", largeScreen: "address" }} />
+            <ConnectButton chainStatus={{ smallScreen: "none", largeScreen: "icon" }} showBalance={false} accountStatus={{ smallScreen: "avatar", largeScreen: "address" }} />
           </div>
         </header>
         <NetworkBanner />

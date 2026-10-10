@@ -11,7 +11,7 @@ test("generates a valid, parseable PDF for text evidence", async () => {
     "2. Laporan gudang: tidak ada penerimaan tambahan setelah batas waktu.",
     "3. Korespondensi: pemasok tidak memberikan jadwal pengiriman baru.",
     "4. Dampak: Modul Baterai EV-48V tidak dapat diproduksi.",
-    "Kerugian yang diklaim: nilai 40 MT yang tidak terkirim = 80 mETH.",
+    "Kerugian yang diklaim: nilai 40 MT yang tidak terkirim = 0,04 ETH.",
   ].join("\n");
 
   const pdfBytes = await generateEvidencePdf({

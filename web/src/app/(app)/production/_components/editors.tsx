@@ -313,7 +313,7 @@ export function DependencyDialog({
               <Input id="d-days" type="number" min={0} value={days} onChange={(e) => setDays(e.target.value)} />
             </div>
             <div>
-              <Label htmlFor="d-exp">Estimasi eksposur (mETH)</Label>
+              <Label htmlFor="d-exp">Estimasi eksposur (ETH)</Label>
               <Input id="d-exp" inputMode="decimal" value={exposure} onChange={(e) => setExposure(e.target.value)} />
             </div>
           </div>

@@ -3,6 +3,7 @@
 import { CheckCircle2, CircleDashed, Loader2, PenLine, Radio, XCircle } from "lucide-react";
 import type { TxState } from "@/hooks/use-protocol-tx";
 import { TxLink } from "@/components/onchain";
+import { SEPOLIA_CHAIN_ID } from "@/lib/chains";
 import { cn } from "@/lib/utils";
 
 const STEPS = [
@@ -52,7 +53,8 @@ export function TxStatus({ state, className }: { state: TxState; className?: str
       )}
       {state.hash && (
         <p className="mt-2 flex flex-wrap items-center gap-1 text-muted-foreground">
-          Tx: <TxLink hash={state.hash} />
+          Tx: <TxLink hash={state.hash} chainId={state.chainId} />
+          {state.chainId === SEPOLIA_CHAIN_ID && <span>(Sepolia Etherscan)</span>}
           {state.blockNumber !== undefined && <span>· blok {state.blockNumber.toString()}</span>}
         </p>
       )}
