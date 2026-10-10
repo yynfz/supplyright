@@ -31,3 +31,4 @@ Thumbs.db
 
 # Local Claude Code config
 .claude/
+contracts/broadcast/*/*/dry-run/

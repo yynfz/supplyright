@@ -1,168 +1,208 @@
 #!/usr/bin/env node
 /**
- * scripts/prepare-funding.mjs
+ * SupplyRight - Sepolia funding plan (and, only after explicit confirmation, execution).
  *
- * Balance inspection, gas estimation, and funding preparation script for:
- * - Deployer: 0x959a7CDa30042C26deAAE4Cf27Cc319dFE2CB5B8
- * - 4 Wallets: buyer, provider, verifier, admin
+ *   node scripts/prepare-funding.mjs              plan only: balances, gas estimates, ETH needed per wallet
+ *   node scripts/prepare-funding.mjs --execute    plan, then ask for confirmation, then send each top-up with
+ *                                                 `cast send --account <source keystore>` (cast asks for the
+ *                                                 keystore password; it is never read by this script)
  *
- * Uses built-in node fetch with standard JSON-RPC 2.0 (Zero external dependencies).
- * Checks balances, calculates required Sepolia ETH (including provider 0.010 ETH escrow),
- * evaluates sufficiency, and displays complete summary tables.
- * Stops BEFORE executing any transfer and requests explicit approval.
+ * Options:
+ *   --from <alias>          source keystore alias (default: the deployer from config/wallets.sepolia.json)
+ *   --gas-price-gwei <n>    planning gas price (default: max(10 x current max fee, 0.02 gwei))
+ *   --json                  print the plan as JSON and exit (used by scripts/rehearse-sepolia-fork.sh)
+ *
+ * Gas per wallet comes from config/gas-profile.sepolia-fork.json, measured by scripts/rehearse-sepolia-fork.sh
+ * on a fork of Sepolia, i.e. under the Glamsterdam gas schedule (EIP-8037 makes contract and storage creation
+ * ~7x more expensive than on a plain local Anvil), plus a 10% margin. The provider additionally needs the
+ * 0.010 ETH escrow; the buyer needs 0.001 ETH for the direct wallet-to-wallet transfer smoke test.
+ * No transfer is sent without the confirmation prompt.
  */
+import fs from "node:fs";
+import path from "node:path";
+import readline from "node:readline/promises";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const configPath = path.resolve(__dirname, "../config/wallets.sepolia.json");
-const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const config = JSON.parse(fs.readFileSync(path.join(root, "config/wallets.sepolia.json"), "utf8"));
+const forkProfile = path.join(root, "config/gas-profile.sepolia-fork.json");
+const profileFile = fs.existsSync(forkProfile) ? forkProfile : path.join(root, "config/gas-profile.anvil.json");
+const gasProfile = JSON.parse(fs.readFileSync(profileFile, "utf8"));
+const glamsterdamProfile = profileFile === forkProfile;
 const rpcUrl = process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com";
+const args = process.argv.slice(2);
+const opt = (name) => {
+  const i = args.indexOf(name);
+  return i >= 0 ? args[i + 1] : undefined;
+};
+const execute = args.includes("--execute");
+
+const GWEI = 10n ** 9n;
+const ETH = 10n ** 18n;
+const ESCROW = 10n ** 16n; // 0.010 ETH
+const SMOKE_TRANSFER = 10n ** 15n; // 0.001 ETH, buyer -> verifier
+const TRANSFER_GAS = 21_000n;
+// Local Anvil deploy also grants the deployer three registrar/approver roles that Sepolia does not.
+const LOCAL_ONLY_DEPLOY_GAS = glamsterdamProfile ? 0n : 3n * 51_333n;
+// The fork's EIP-8037 parameters were measured ~1% below live Sepolia; plan with 10% headroom.
+const withMargin = (gas) => (gas * 110n) / 100n;
 
 let rpcId = 0;
-async function rpcCall(method, params) {
+async function rpc(method, params = []) {
   const res = await fetch(rpcUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method, params }),
   });
-  const data = await res.json();
-  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-  return data.result;
+  const json = await res.json();
+  if (json.error) throw new Error(`${method}: ${json.error.message}`);
+  return json.result;
 }
 
-function weiToEth(weiBigInt) {
-  const str = weiBigInt.toString().padStart(19, "0");
-  const whole = str.slice(0, -18);
-  const frac = str.slice(-18).replace(/0+$/, "");
-  return frac.length > 0 ? `${whole}.${frac}` : whole;
-}
-
-function ethToWei(ethStr) {
-  const [whole, frac = ""] = ethStr.split(".");
-  const paddedFrac = frac.padEnd(18, "0").slice(0, 18);
-  return BigInt(whole + paddedFrac);
-}
-
-const deployerAddress = config.deployer.address;
-const roles = [
-  { key: "admin", name: "supplyright-admin", address: config.wallets.admin.address, requiredGasEth: "0.005", escrowEth: "0.000" },
-  { key: "buyer", name: "supplyright-buyer", address: config.wallets.buyer.address, requiredGasEth: "0.005", escrowEth: "0.000" },
-  { key: "provider", name: "supplyright-provider", address: config.wallets.provider.address, requiredGasEth: "0.005", escrowEth: "0.010" },
-  { key: "verifier", name: "supplyright-verifier", address: config.wallets.verifier.address, requiredGasEth: "0.005", escrowEth: "0.000" },
-];
+const fmt = (wei) => {
+  const neg = wei < 0n;
+  const v = neg ? -wei : wei;
+  const frac = (v % ETH).toString().padStart(18, "0").replace(/0+$/, "");
+  return `${neg ? "-" : ""}${v / ETH}${frac ? "." + frac : ""}`;
+};
+// Round a top-up up to the next 0.0005 ETH so the transfers are readable.
+const roundUp = (wei) => {
+  const step = 5n * 10n ** 14n;
+  return ((wei + step - 1n) / step) * step;
+};
 
 async function main() {
-  console.log("================================================================================");
-  console.log(" SupplyRight: Sepolia Funding Preparation & Balance Check");
-  console.log(` Network: Ethereum Sepolia (Chain ID ${config.chainId})`);
-  console.log(` RPC Endpoint: ${rpcUrl}`);
-  console.log("================================================================================\n");
+  const chainId = BigInt(await rpc("eth_chainId"));
+  if (chainId !== BigInt(config.chainId)) throw new Error(`RPC is chain ${chainId}, expected ${config.chainId}`);
+  const gasPrice = BigInt(await rpc("eth_gasPrice"));
+  const priority = BigInt(await rpc("eth_maxPriorityFeePerGas").catch(() => "0x0"));
+  const block = await rpc("eth_getBlockByNumber", ["latest", false]);
+  const baseFee = BigInt(block.baseFeePerGas ?? "0x0");
+  const currentMaxFee = 2n * baseFee + priority > gasPrice ? 2n * baseFee + priority : gasPrice;
+  const planGwei = opt("--gas-price-gwei");
+  const planPrice = planGwei
+    ? BigInt(Math.round(Number(planGwei) * 1e9))
+    : (10n * currentMaxFee > GWEI / 50n ? 10n * currentMaxFee : GWEI / 50n);
 
-  let gasPriceWei = 1000000000n; // fallback 1 gwei
-  try {
-    const gpHex = await rpcCall("eth_gasPrice", []);
-    gasPriceWei = BigInt(gpHex);
-  } catch (err) {
-    console.warn("Could not fetch current gas price from RPC, using 1 gwei fallback:", err.message);
-  }
-
-  // 1. Fetch balances
-  let deployerBalWei = 0n;
-  try {
-    const balHex = await rpcCall("eth_getBalance", [deployerAddress, "latest"]);
-    deployerBalWei = BigInt(balHex);
-  } catch (e) {
-    console.warn("Could not read deployer balance from RPC:", e.message);
-  }
-
-  console.log(`Deployer Account: ${deployerAddress}`);
-  console.log(`Deployer Balance: ${weiToEth(deployerBalWei)} Sepolia ETH\n`);
-
-  console.log("Role Wallets Balance and Requirements:");
-  console.log("--------------------------------------------------------------------------------");
-  console.log(
-    "Role".padEnd(23) +
-    "Address".padEnd(44) +
-    "Current ETH".padEnd(16) +
-    "Gas Req".padEnd(10) +
-    "Escrow Req".padEnd(12) +
-    "Total Needed"
-  );
-  console.log("--------------------------------------------------------------------------------");
-
-  let totalFundingNeededWei = 0n;
-  const fundingTransfers = [];
-
+  const roles = [
+    { key: "admin", gas: withMargin(BigInt(gasProfile.admin)), extra: 0n, why: "mint/activate/delivery" },
+    { key: "buyer", gas: withMargin(BigInt(gasProfile.buyer)) + TRANSFER_GAS, extra: SMOKE_TRANSFER, why: "request, claim, ETH smoke transfer" },
+    { key: "provider", gas: withMargin(BigInt(gasProfile.provider)), extra: ESCROW, why: "0.010 ETH escrow + fund tx" },
+    { key: "verifier", gas: withMargin(BigInt(gasProfile.verifier)), extra: 0n, why: "approve + settle" },
+  ];
   for (const r of roles) {
-    let balWei = 0n;
-    try {
-      const balHex = await rpcCall("eth_getBalance", [r.address, "latest"]);
-      balWei = BigInt(balHex);
-    } catch (e) {
-      // network/rpc error fallback
-    }
+    const w = config.wallets[r.key];
+    if (!w.address) throw new Error(`config has no address for ${r.key}; run scripts/setup-supplyright-wallets.sh`);
+    r.address = w.address;
+    r.alias = w.keystoreAlias;
+    r.balance = BigInt(await rpc("eth_getBalance", [w.address, "latest"]));
+    r.need = r.gas * planPrice + r.extra;
+    r.topUp = r.balance >= r.need ? 0n : roundUp(r.need - r.balance);
+  }
 
-    const gasWei = ethToWei(r.requiredGasEth);
-    const escrowWei = ethToWei(r.escrowEth);
-    const targetWei = gasWei + escrowWei;
+  const sourceAlias = opt("--from") || config.deployer.keystoreAlias;
+  const sourceAddress = sourceAlias === config.deployer.keystoreAlias ? config.deployer.address : opt("--from-address");
+  if (!sourceAddress) throw new Error("--from <alias> needs --from-address <its public address>");
+  const deployerBalance = BigInt(await rpc("eth_getBalance", [config.deployer.address, "latest"]));
+  const deployGas = withMargin(BigInt(gasProfile.deployer) - LOCAL_ONLY_DEPLOY_GAS);
+  const deployed = Boolean(config.contracts?.vault) && (await rpc("eth_getCode", [config.contracts.vault, "latest"])) !== "0x";
+  const deployerNeed = deployed ? 0n : deployGas * planPrice;
+  const transfers = roles.filter((r) => r.topUp > 0n);
+  const transferGasCost = BigInt(transfers.length) * TRANSFER_GAS * planPrice;
+  const sourceBalance =
+    sourceAddress.toLowerCase() === config.deployer.address.toLowerCase()
+      ? deployerBalance
+      : BigInt(await rpc("eth_getBalance", [sourceAddress, "latest"]));
+  const totalTopUps = transfers.reduce((s, r) => s + r.topUp, 0n);
+  const sourceIsDeployer = sourceAddress.toLowerCase() === config.deployer.address.toLowerCase();
+  const sourceNeed = totalTopUps + transferGasCost + (sourceIsDeployer ? deployerNeed : 0n);
 
-    let deficitWei = targetWei > balWei ? targetWei - balWei : 0n;
-    totalFundingNeededWei += deficitWei;
+  if (args.includes("--json")) {
+    const plan = {
+      planGasPriceWei: planPrice.toString(),
+      deployer: { address: config.deployer.address, deployGasCostWei: deployerNeed.toString() },
+      roles: roles.map((r) => ({ key: r.key, address: r.address, needWei: r.need.toString(), topUpWei: r.topUp.toString() })),
+    };
+    console.log(JSON.stringify(plan));
+    return;
+  }
 
+  console.log("SupplyRight - Sepolia funding plan");
+  console.log(
+    glamsterdamProfile
+      ? `gas profile: ${path.relative(root, profileFile)} (measured on a Sepolia fork, Glamsterdam rules) + 10%`
+      : `WARNING: gas profile ${path.relative(root, profileFile)} was measured on plain Anvil and UNDERESTIMATES ` +
+          "Sepolia since Glamsterdam; run scripts/rehearse-sepolia-fork.sh first",
+  );
+  console.log(`RPC ${rpcUrl.replace(/(https?:\/\/[^/]+).*/, "$1/...")} · chain ${chainId} · block ${BigInt(block.number)}`);
+  console.log(
+    `gas price now ${Number(gasPrice) / 1e9} gwei (base fee ${Number(baseFee) / 1e9} gwei); ` +
+      `planning price ${Number(planPrice) / 1e9} gwei`,
+  );
+  console.log("");
+  console.log("Role      Address                                     Balance        Gas units  Gas@plan       Extra   Needed     Top-up");
+  for (const r of roles) {
     console.log(
-      r.name.padEnd(23) +
-      r.address.padEnd(44) +
-      weiToEth(balWei).slice(0, 10).padEnd(16) +
-      (r.requiredGasEth + " ETH").padEnd(10) +
-      (r.escrowEth + " ETH").padEnd(12) +
-      weiToEth(deficitWei).slice(0, 10) + " ETH"
+      `${r.key.padEnd(9)} ${r.address} ${fmt(r.balance).padEnd(14)} ${String(r.gas).padStart(9)}  ${fmt(r.gas * planPrice).padEnd(13)} ${fmt(r.extra).padEnd(7)} ${fmt(r.need).padEnd(10)} ${fmt(r.topUp)}`,
     );
-
-    if (deficitWei > 0n) {
-      fundingTransfers.push({
-        source: deployerAddress,
-        destination: r.address,
-        role: r.name,
-        amountWei: deficitWei,
-        amountEth: weiToEth(deficitWei),
-        estimatedGas: 21000n,
-        estimatedGasCostWei: 21000n * gasPriceWei,
-      });
-    }
+  }
+  console.log(
+    `deployer  ${config.deployer.address} ${fmt(deployerBalance).padEnd(14)} ${String(deployed ? 0n : deployGas).padStart(9)}  ${fmt(deployerNeed).padEnd(13)} ${deployed ? "(contracts already deployed)" : "deploy + 11 role grants"}`,
+  );
+  console.log("");
+  console.log(`At today's gas price the whole run costs about ${fmt((deployGas + roles.reduce((s, r) => s + r.gas, 0n)) * currentMaxFee)} ETH in gas; the plan uses the higher planning price as a buffer.`);
+  console.log("");
+  console.log("Planned transfers:");
+  if (transfers.length === 0) console.log("  none - every role wallet already holds enough ETH");
+  for (const r of transfers) {
+    console.log(`  ${sourceAddress} (${sourceAlias}) -> ${r.address} (${r.alias})  ${fmt(r.topUp)} ETH  [${r.why}]  gas 21000 (~${fmt(TRANSFER_GAS * planPrice)} ETH)`);
+  }
+  console.log("");
+  console.log(`Source ${sourceAlias} needs ${fmt(sourceNeed)} ETH (top-ups ${fmt(totalTopUps)} + transfer gas ${fmt(transferGasCost)}${sourceIsDeployer ? ` + deployment ${fmt(deployerNeed)}` : ""}); it holds ${fmt(sourceBalance)} ETH.`);
+  const shortfall = sourceNeed > sourceBalance ? sourceNeed - sourceBalance : 0n;
+  if (shortfall > 0n) {
+    console.log(`INSUFFICIENT: send at least ${fmt(shortfall)} Sepolia ETH to ${sourceAddress} first (faucet or another wallet).`);
+  } else {
+    console.log("Source balance is sufficient.");
   }
 
-  console.log("--------------------------------------------------------------------------------");
-  console.log(`Total Funding Required across 4 wallets: ${weiToEth(totalFundingNeededWei)} Sepolia ETH\n`);
-
-  console.log("Planned Transfers from Deployer:");
-  console.log("--------------------------------------------------------------------------------");
-  for (const t of fundingTransfers) {
-    console.log(`- Destination : ${t.destination} (${t.role})`);
-    console.log(`  Source      : ${t.source}`);
-    console.log(`  ETH Amount  : ${t.amountEth} ETH`);
-    console.log(`  Est. Gas    : ${t.estimatedGas} gas (~${weiToEth(t.estimatedGasCostWei)} ETH)`);
-    console.log(`  Total Req   : ${weiToEth(t.amountWei + t.estimatedGasCostWei)} ETH\n`);
+  if (!execute) {
+    console.log("\nPlan only - nothing was sent. Re-run with --execute to send these transfers after confirming.");
+    return;
   }
+  if (shortfall > 0n) throw new Error("source balance insufficient; nothing sent");
+  if (transfers.length === 0) return;
 
-  const isSufficient = deployerBalWei >= totalFundingNeededWei;
-  console.log(`Deployer Balance Sufficiency: ${isSufficient ? "SUFFICIENT" : "INSUFFICIENT"}`);
-  if (!isSufficient) {
-    console.log(`Deficit: ${weiToEth(totalFundingNeededWei - deployerBalWei)} Sepolia ETH needed on deployer wallet.`);
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await rl.question(`\nSend the ${transfers.length} transfer(s) above from ${sourceAddress}? Type "yes" to confirm: `);
+  rl.close();
+  if (answer.trim() !== "yes") {
+    console.log("Not confirmed - nothing sent.");
+    return;
   }
-
-  console.log("\n================================================================================");
-  console.log(" [STOP] SAFETY GUARD:");
-  console.log(" As per security requirements, NO on-chain funding transaction is executed automatically.");
-  console.log(" User approval and sufficient Sepolia ETH balance are required before broadcasting.");
-  console.log("================================================================================\n");
+  const cast = process.env.CAST || "cast";
+  for (const r of transfers) {
+    console.log(`\n-> ${fmt(r.topUp)} ETH to ${r.key} ${r.address} (cast asks for the ${sourceAlias} keystore password)`);
+    const res = spawnSync(
+      cast,
+      ["send", r.address, "--value", r.topUp.toString(), "--account", sourceAlias, "--rpc-url", rpcUrl, "--json"],
+      { stdio: ["inherit", "pipe", "inherit"], encoding: "utf8" },
+    );
+    if (res.status !== 0) throw new Error(`transfer to ${r.key} failed; stopping (later transfers not sent)`);
+    const receipt = JSON.parse(res.stdout);
+    const ok = receipt.status === "0x1" || receipt.status === 1 || receipt.status === "1";
+    console.log(`   tx ${receipt.transactionHash} · block ${BigInt(receipt.blockNumber)} · status ${ok ? "success" : "FAILED"}`);
+    console.log(`   ${config.explorer}/tx/${receipt.transactionHash}`);
+    if (!ok) throw new Error("transfer reverted; stopping");
+  }
+  console.log("\nBalances after funding:");
+  for (const r of roles) {
+    console.log(`  ${r.key.padEnd(9)} ${r.address} ${fmt(BigInt(await rpc("eth_getBalance", [r.address, "latest"])))} ETH`);
+  }
 }
 
-main().catch((err) => {
-  console.error("Execution error:", err);
+main().catch((e) => {
+  console.error(`error: ${e.message}`);
   process.exit(1);
 });
-

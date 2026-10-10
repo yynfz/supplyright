@@ -20,10 +20,12 @@ import {
 ///         the four-wallet role matrix (see SupplyRightRoles) and verifies it onchain.
 ///
 /// Sepolia:
-///   forge script script/Deploy.s.sol:Deploy --rpc-url sepolia --broadcast --slow \
+///   forge script script/Deploy.s.sol:Deploy --rpc-url sepolia --broadcast --slow --skip-simulation \
 ///     --account supplyright-sepolia-deployer.json --sender <deployer address>
 ///   Role addresses come from config/wallets.sepolia.json; the deployed addresses are written to
-///   deployments/11155111.json and back into that config file.
+///   deployments/11155111.json, and scripts/run-sepolia-e2e.sh copies them into the config only after checking
+///   the code exists onchain. --skip-simulation lets the Sepolia node estimate every transaction's gas: since
+///   the Glamsterdam fork (EIP-8037) forge's local simulation underprices contract and storage creation ~7x.
 ///
 /// Local Anvil: no flags needed. The deployer (#0) additionally keeps REGISTRAR/TRANSFER_APPROVER so the
 /// local demo personas keep working.
@@ -96,15 +98,5 @@ contract Deploy is ScriptBase {
         vm.serializeAddress(k, "vault", address(p.vault));
         string memory json = vm.serializeAddress(k, "claimManager", address(p.claims));
         vm.writeJson(json, _deploymentPath());
-
-        if (block.chainid == SEPOLIA_CHAIN_ID) {
-            string memory c = "contracts";
-            vm.serializeAddress(c, "supplyRightNFT", address(p.rights));
-            vm.serializeAddress(c, "protectionNFT", address(p.protection));
-            vm.serializeAddress(c, "recoveryClaimNFT", address(p.recovery));
-            vm.serializeAddress(c, "vault", address(p.vault));
-            string memory contracts = vm.serializeAddress(c, "claimManager", address(p.claims));
-            vm.writeJson(contracts, _walletConfigPath(), ".contracts");
-        }
     }
 }

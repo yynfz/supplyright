@@ -15,9 +15,8 @@ remappings = [
 ]
 fs_permissions = [
   { access = "read-write", path = "./deployments" },
-  { access = "read-write", path = "../config" },
+  { access = "read", path = "../config" },
   { access = "read", path = "../demo" },
-  { access = "read", path = "./broadcast" },
 ]
 
 [profile.default.fuzz]
