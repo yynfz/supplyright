@@ -3,6 +3,8 @@ contracts/out/
 contracts/cache/
 contracts/broadcast/
 contracts/deployments/31337*.json
+# SeedDemo writes <chainId>-demo.json with runtime token ids; keep it local like the 31337 one
+contracts/deployments/*-demo.json
 
 # Node / Next.js
 node_modules/
