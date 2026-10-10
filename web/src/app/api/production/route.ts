@@ -48,9 +48,9 @@ export const GET = handle(async (req: Request) => {
   requireRole(caller, ...MANUFACTURER_ROLES);
   const sb = supabaseAdmin();
   const [m, p, d] = await Promise.all([
-    sb.from("materials").select("*").order("criticality").order("name"),
-    sb.from("products").select("*").order("name"),
-    sb.from("dependencies").select("*"),
+    sb.from("materials").select("*").eq("chain_id", caller.chainId).order("criticality").order("name"),
+    sb.from("products").select("*").eq("chain_id", caller.chainId).order("name"),
+    sb.from("dependencies").select("*").eq("chain_id", caller.chainId),
   ]);
   dbError(m.error ?? p.error ?? d.error, "memuat peta produksi");
   return NextResponse.json({ materials: m.data ?? [], products: p.data ?? [], dependencies: d.data ?? [] });
@@ -61,7 +61,7 @@ export const POST = handle(async (req: Request) => {
   requireRole(caller, ...MANUFACTURER_ROLES);
   const body = z.object({ type: Type, data: z.unknown() }).parse(await req.json());
   const data: Record<string, unknown> = SCHEMA[body.type].parse(body.data);
-  const { data: row, error } = await supabaseAdmin().from(TABLE[body.type]).insert(data).select("*").single();
+  const { data: row, error } = await supabaseAdmin().from(TABLE[body.type]).insert({ ...data, chain_id: caller.chainId }).select("*").single();
   if (error?.code === "23505") throw new HttpError(409, "Kode/SKU atau relasi tersebut sudah ada.");
   dbError(error, "menyimpan data produksi");
   return NextResponse.json({ row }, { status: 201 });
@@ -72,7 +72,7 @@ export const PATCH = handle(async (req: Request) => {
   requireRole(caller, ...MANUFACTURER_ROLES);
   const body = z.object({ type: Type, id: z.string().uuid(), data: z.unknown() }).parse(await req.json());
   const data: Record<string, unknown> = (SCHEMA[body.type] as z.AnyZodObject).partial().parse(body.data);
-  const { data: row, error } = await supabaseAdmin().from(TABLE[body.type]).update(data).eq("id", body.id).select("*").single();
+  const { data: row, error } = await supabaseAdmin().from(TABLE[body.type]).update(data).eq("id", body.id).eq("chain_id", caller.chainId).select("*").single();
   if (error?.code === "23505") throw new HttpError(409, "Kode/SKU atau relasi tersebut sudah ada.");
   dbError(error, "memperbarui data produksi");
   return NextResponse.json({ row });
@@ -84,7 +84,7 @@ export const DELETE = handle(async (req: Request) => {
   const url = new URL(req.url);
   const type = Type.parse(url.searchParams.get("type"));
   const id = z.string().uuid().parse(url.searchParams.get("id"));
-  const { error } = await supabaseAdmin().from(TABLE[type]).delete().eq("id", id);
+  const { error } = await supabaseAdmin().from(TABLE[type]).delete().eq("id", id).eq("chain_id", caller.chainId);
   dbError(error, "menghapus data produksi");
   return NextResponse.json({ ok: true });
 });

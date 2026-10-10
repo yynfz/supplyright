@@ -190,6 +190,7 @@ async function main() {
     }
     check(
       await sb.from("documents").upsert({
+        chain_id: chainId,
         agreement_id: meta.agreement ? agreementIds[meta.agreement] : null,
         context_key: meta.context ?? null,
         kind: meta.kind,
@@ -210,11 +211,11 @@ async function main() {
     await sb
       .from("materials")
       .upsert([
-        { name: "Nikel Sulfat (battery grade)", code: "MAT-A-NISO4", criticality: "CRITICAL", agreement_id: agreementIds.A, po_hash: hashes["PO-2026-0417.txt"], alternative_suppliers: 0, notes: "Pemasok tunggal; kualifikasi pemasok baru ±60 hari." },
-        { name: "Litium Karbonat (battery grade)", code: "MAT-B-LI2CO3", criticality: "HIGH", agreement_id: agreementIds.B, po_hash: hashes["PO-2026-0388.txt"], alternative_suppliers: 1, alternative_lead_days: 30 },
-        { name: "Aluminium Ingot A7", code: "MAT-C-ALA7", criticality: "MEDIUM", agreement_id: agreementIds.C, po_hash: hashes["PO-2026-0452.txt"], alternative_suppliers: 2, alternative_lead_days: 10 },
-        { name: "Separator Film PE 16µm", code: "MAT-D-SEPPE", criticality: "HIGH", reported_status: "ARRIVED", alternative_suppliers: 1, alternative_lead_days: 21, notes: "Stok gudang 45 hari (tanpa PO onchain)." },
-      ], { onConflict: "code" })
+        { chain_id: chainId, name: "Nikel Sulfat (battery grade)", code: "MAT-A-NISO4", criticality: "CRITICAL", agreement_id: agreementIds.A, po_hash: hashes["PO-2026-0417.txt"], alternative_suppliers: 0, notes: "Pemasok tunggal; kualifikasi pemasok baru ±60 hari." },
+        { chain_id: chainId, name: "Litium Karbonat (battery grade)", code: "MAT-B-LI2CO3", criticality: "HIGH", agreement_id: agreementIds.B, po_hash: hashes["PO-2026-0388.txt"], alternative_suppliers: 1, alternative_lead_days: 30 },
+        { chain_id: chainId, name: "Aluminium Ingot A7", code: "MAT-C-ALA7", criticality: "MEDIUM", agreement_id: agreementIds.C, po_hash: hashes["PO-2026-0452.txt"], alternative_suppliers: 2, alternative_lead_days: 10 },
+        { chain_id: chainId, name: "Separator Film PE 16µm", code: "MAT-D-SEPPE", criticality: "HIGH", reported_status: "ARRIVED", alternative_suppliers: 1, alternative_lead_days: 21, notes: "Stok gudang 45 hari (tanpa PO onchain)." },
+      ], { onConflict: "chain_id,code" })
       .select("id, code"),
     "materials",
   );
@@ -223,20 +224,20 @@ async function main() {
     await sb
       .from("products")
       .upsert([
-        { name: "Modul Baterai EV-48V", sku: "PRD-X-EV48", daily_output_units: 120, notes: "Produk X — butuh nikel sulfat, litium karbonat, separator." },
-        { name: "Rangka Inverter 5 kW", sku: "PRD-Y-INV5", daily_output_units: 80, notes: "Produk Y — butuh aluminium ingot." },
-      ], { onConflict: "sku" })
+        { chain_id: chainId, name: "Modul Baterai EV-48V", sku: "PRD-X-EV48", daily_output_units: 120, notes: "Produk X — butuh nikel sulfat, litium karbonat, separator." },
+        { chain_id: chainId, name: "Rangka Inverter 5 kW", sku: "PRD-Y-INV5", daily_output_units: 80, notes: "Produk Y — butuh aluminium ingot." },
+      ], { onConflict: "chain_id,sku" })
       .select("id, sku"),
     "products",
   );
   const p = Object.fromEntries(products.map((x) => [x.sku, x.id]));
   check(
     await sb.from("dependencies").upsert([
-      { material_id: m["MAT-A-NISO4"], product_id: p["PRD-X-EV48"], is_blocking: true, est_disruption_days: 21, est_financial_exposure: "60", notes: "Tanpa nikel sulfat, katoda tidak dapat diproduksi." },
-      { material_id: m["MAT-B-LI2CO3"], product_id: p["PRD-X-EV48"], is_blocking: true, est_disruption_days: 14, est_financial_exposure: "25" },
-      { material_id: m["MAT-D-SEPPE"], product_id: p["PRD-X-EV48"], is_blocking: true, est_disruption_days: 7, est_financial_exposure: "10" },
-      { material_id: m["MAT-C-ALA7"], product_id: p["PRD-Y-INV5"], is_blocking: true, est_disruption_days: 10, est_financial_exposure: "18" },
-    ], { onConflict: "material_id,product_id" }),
+      { chain_id: chainId, material_id: m["MAT-A-NISO4"], product_id: p["PRD-X-EV48"], is_blocking: true, est_disruption_days: 21, est_financial_exposure: "60", notes: "Tanpa nikel sulfat, katoda tidak dapat diproduksi." },
+      { chain_id: chainId, material_id: m["MAT-B-LI2CO3"], product_id: p["PRD-X-EV48"], is_blocking: true, est_disruption_days: 14, est_financial_exposure: "25" },
+      { chain_id: chainId, material_id: m["MAT-D-SEPPE"], product_id: p["PRD-X-EV48"], is_blocking: true, est_disruption_days: 7, est_financial_exposure: "10" },
+      { chain_id: chainId, material_id: m["MAT-C-ALA7"], product_id: p["PRD-Y-INV5"], is_blocking: true, est_disruption_days: 10, est_financial_exposure: "18" },
+    ], { onConflict: "chain_id,material_id,product_id" }),
     "dependencies",
   );
   console.log("  ✓ peta dependensi produksi: 4 material, 2 produk, 4 dependensi");
