@@ -4,7 +4,7 @@
 #
 #   bash scripts/run-sepolia-e2e.sh <command>
 #
-#   preflight  read-only: chain, config, keystores, balances, deployment, role matrix
+#   preflight  read-only: chain, config, keystores, balances, deployment
 #   deploy     Deploy.s.sol signed by the existing deployer keystore (skipped if already deployed)
 #   roles      SetupRoles.s.sol (idempotent; sends nothing when the matrix already holds)
 #   setup      E2E steps 1-3  (admin mints/activates/records delivery, buyer requests, provider funds 0.010 ETH)
@@ -19,8 +19,8 @@
 # Every command that sends transactions first prints a dry run (forge simulation against live Sepolia state
 # or the exact transfer), then asks you to type "yes". Forge/cast ask for each keystore password themselves;
 # this script never sees, stores or passes a password or private key. `--slow` makes forge wait for each
-# receipt before sending the next transaction. Steps resume from onchain state, so re-running after a failure
-# is safe and never duplicates a settlement.
+# receipt before sending the next transaction. Contract steps resume from onchain state, so re-running after a
+# failure never duplicates a settlement. The optional smoke transfer is logged per E2E_RUN_ID.
 #
 # Env: SEPOLIA_RPC_URL (default publicnode), E2E_RUN_ID (default SEPOLIA-E2E-001), E2E_DEADLINE_DELAY (300),
 #      ETHERSCAN_API_KEY (optional: verify contracts on deploy)
@@ -50,17 +50,20 @@ EXPLORER=$(cfg "c.explorer")
 
 say() { printf '\n==> %s\n' "$*"; }
 die() { echo "error: $*" >&2; exit 1; }
+[ "$(cast chain-id --rpc-url "$RPC")" = "11155111" ] || die "RPC is not Sepolia (chain 11155111)"
 SIGNER_MODE="${SIGNER_MODE:-keystore}"
 case "$SIGNER_MODE" in
   keystore) ;;
   unlocked) case "$RPC" in http://127.0.0.1:*|http://localhost:*) ;; *) die "SIGNER_MODE=unlocked is for a local fork only" ;; esac ;;
   *) die "SIGNER_MODE must be keystore or unlocked" ;;
 esac
-# Signer flags for forge: one --account per keystore, or --unlocked on the local fork rehearsal.
+# Signer flags for forge: explicit keystore paths (also support FOUNDRY_KEYSTORE_DIR), or --unlocked
+# on the local fork rehearsal. Use a bash array so paths with spaces are kept intact.
 signers() {
-  if [ "$SIGNER_MODE" = unlocked ]; then echo "--unlocked"; return; fi
+  SIGNER_ARGS=()
+  if [ "$SIGNER_MODE" = unlocked ]; then SIGNER_ARGS=(--unlocked); return; fi
   local a
-  for a in "$@"; do printf -- '--account %s ' "$a"; done
+  for a in "$@"; do SIGNER_ARGS+=(--keystore "$KEYSTORES/$a"); done
 }
 eth() { cast balance --ether "$1" --rpc-url "$RPC"; }
 confirm() {
@@ -99,15 +102,35 @@ forge_send() { forge script "$@" --rpc-url sepolia --broadcast --slow --skip-sim
 preflight() {
   say "preflight (read-only)"
   [ "$(cast chain-id --rpc-url "$RPC")" = "11155111" ] || die "RPC is not Sepolia"
+  node -e '
+    const c = require(process.argv[1]);
+    const addresses = [c.deployer.address, ...Object.values(c.wallets).map(w => w.address)];
+    if (addresses.length !== 5 || !addresses.every(a => /^0x[0-9a-fA-F]{40}$/.test(a))
+        || new Set(addresses.map(a => a.toLowerCase())).size !== 5) process.exit(1);
+  ' "$CONFIG" || die "deployer and role addresses in config must be valid and distinct"
   echo "RPC $(echo "$RPC" | sed -E 's#(https?://[^/]+).*#\1/...#') - block $(cast block-number --rpc-url "$RPC"), gas price $(cast gas-price --rpc-url "$RPC") wei"
   for a in "$DEPLOYER_ALIAS" "$ADMIN_ALIAS" "$BUYER_ALIAS" "$PROVIDER_ALIAS" "$VERIFIER_ALIAS"; do
     [ -f "$KEYSTORES/$a" ] || [ "$SIGNER_MODE" = unlocked ] || die "keystore $a not found in $KEYSTORES"
   done
+  if [ "$SIGNER_MODE" = keystore ]; then
+    local expected actual
+    for a in "$DEPLOYER_ALIAS" "$ADMIN_ALIAS" "$BUYER_ALIAS" "$PROVIDER_ALIAS" "$VERIFIER_ALIAS"; do
+      case "$a" in
+        "$DEPLOYER_ALIAS") expected="$DEPLOYER" ;;
+        "$ADMIN_ALIAS") expected="$ADMIN" ;;
+        "$BUYER_ALIAS") expected="$BUYER" ;;
+        "$PROVIDER_ALIAS") expected="$PROVIDER" ;;
+        "$VERIFIER_ALIAS") expected="$VERIFIER" ;;
+      esac
+      echo "Verify $a (hidden keystore password prompt):"
+      actual=$(cast wallet address --keystore "$KEYSTORES/$a")
+      [ "${actual,,}" = "${expected,,}" ] || die "$a resolves to $actual, but config expects $expected"
+    done
+  fi
   printf '%-9s %-42s %s\n' role address "balance (ETH)"
   printf '%-9s %-42s %s\n' deployer "$DEPLOYER" "$(eth "$DEPLOYER")" admin "$ADMIN" "$(eth "$ADMIN")" \
     buyer "$BUYER" "$(eth "$BUYER")" provider "$PROVIDER" "$(eth "$PROVIDER")" verifier "$VERIFIER" "$(eth "$VERIFIER")"
   if deployed; then
-    sync_config
     echo "contracts deployed: vault $(vault_addr) holds $(eth "$(vault_addr)") ETH"
   else
     echo "contracts: not deployed yet"
@@ -115,16 +138,27 @@ preflight() {
 }
 
 deploy() {
-  if deployed; then say "deploy: already deployed at vault $(vault_addr) - skipping"; return; fi
+  if deployed; then
+    say "deploy: already deployed at vault $(vault_addr) - skipping"
+    sync_config
+    return
+  fi
+  # A prior broadcast may have created some contracts before failing. A second deploy would create
+  # a fresh set and strand those contracts, so require recovery from the recorded broadcast first.
+  if [ -f "$DEPLOYMENT" ] || [ -f "$ROOT/contracts/broadcast/Deploy.s.sol/11155111/run-latest.json" ]; then
+    die "an earlier Sepolia deployment or broadcast exists but its five contracts are not verified; inspect the receipts and resume/reconcile it before deploying again"
+  fi
   say "deploy - dry run against Sepolia (nothing is sent)"
-  forge_sim script/Deploy.s.sol:Deploy --sender "$DEPLOYER" | grep -E "deployed|role|Dry run" || true
+  local out
+  out=$(forge_sim script/Deploy.s.sol:Deploy --sender "$DEPLOYER") || die "deploy dry run failed: $out"
+  echo "$out" | grep -E "deployed|role|Dry run" || true
   echo "$GAS_NOTE"
   echo "deployer $DEPLOYER holds $(eth "$DEPLOYER") ETH"
   confirm "Deploy the 5 contracts and assign the role matrix from $DEPLOYER ($DEPLOYER_ALIAS)?"
   local verify=()
   [ -n "${ETHERSCAN_API_KEY:-}" ] && verify=(--verify)
-  # shellcheck disable=SC2046
-  forge_send script/Deploy.s.sol:Deploy $(signers "$DEPLOYER_ALIAS") --sender "$DEPLOYER" "${verify[@]}"
+  signers "$DEPLOYER_ALIAS"
+  forge_send script/Deploy.s.sol:Deploy "${SIGNER_ARGS[@]}" --sender "$DEPLOYER" "${verify[@]}"
   deployed || die "deployment not visible onchain; re-run deploy after checking the forge output"
   sync_config
   echo "verified code onchain for: $CONTRACT_KEYS; addresses saved in config/wallets.sepolia.json"
@@ -132,25 +166,38 @@ deploy() {
 
 roles() {
   say "roles - dry run"
-  local out
-  out=$(forge_sim script/SetupRoles.s.sol:SetupRoles --sender "$DEPLOYER")
+  local out role signer alias
+  role="${SETUP_ROLES_AS:-deployer}"
+  case "$role" in
+    deployer) signer="$DEPLOYER"; alias="$DEPLOYER_ALIAS" ;;
+    admin) signer="$ADMIN"; alias="$ADMIN_ALIAS" ;;
+    *) die "SETUP_ROLES_AS must be deployer or admin" ;;
+  esac
+  if [ "$role" = admin ] && [ "${RENOUNCE_DEPLOYER_ADMIN:-false}" = true ]; then
+    die "RENOUNCE_DEPLOYER_ADMIN=true requires SETUP_ROLES_AS=deployer"
+  fi
+  out=$(forge_sim script/SetupRoles.s.sol:SetupRoles --sender "$signer") || die "role setup dry run failed: $out"
   echo "$out" | grep -E "grants sent|verified|FAILED" || true
-  if echo "$out" | grep -q "role grants sent: 0"; then echo "role matrix already holds - nothing to send"; return; fi
-  confirm "Send the missing role grants from $DEPLOYER?"
-  # shellcheck disable=SC2046
-  forge_send script/SetupRoles.s.sol:SetupRoles $(signers "$DEPLOYER_ALIAS") --sender "$DEPLOYER"
+  if echo "$out" | grep -q "role grants sent: 0" && [ "${RENOUNCE_DEPLOYER_ADMIN:-false}" != true ]; then
+    echo "role matrix already holds - nothing to send"
+    return
+  fi
+  confirm "Send role setup from $signer ($alias), including any requested deployer admin renouncement?"
+  signers "$alias"
+  forge_send script/SetupRoles.s.sol:SetupRoles "${SIGNER_ARGS[@]}" --sender "$signer"
 }
 
 setup() {
   say "E2E setup (steps 1-3) - dry run against Sepolia"
-  E2E_PHASE=setup forge_sim script/RunSepoliaE2E.s.sol:RunSepoliaE2E --sender "$ADMIN" \
-    | grep -E "^\s*\[|NFT #|escrow" || true
+  local out
+  out=$(E2E_PHASE=setup forge_sim script/RunSepoliaE2E.s.sol:RunSepoliaE2E --sender "$ADMIN") || die "setup dry run failed: $out"
+  echo "$out" | grep -E "^\s*\[|NFT #|escrow" || true
   echo "$GAS_NOTE"
   confirm "Send steps 1-3 signed by admin, buyer and provider (provider sends the 0.010 ETH escrow)?"
   echo "forge asks for the keystore passwords in this order: $ADMIN_ALIAS, $BUYER_ALIAS, $PROVIDER_ALIAS"
-  # shellcheck disable=SC2046
+  signers "$ADMIN_ALIAS" "$BUYER_ALIAS" "$PROVIDER_ALIAS"
   E2E_PHASE=setup forge_send script/RunSepoliaE2E.s.sol:RunSepoliaE2E \
-    $(signers "$ADMIN_ALIAS" "$BUYER_ALIAS" "$PROVIDER_ALIAS") --sender "$ADMIN"
+    "${SIGNER_ARGS[@]}" --sender "$ADMIN"
 }
 
 deadline() {
@@ -180,34 +227,66 @@ wait_deadline() {
 
 claim() {
   say "E2E claim (steps 4-6) - dry run against Sepolia"
-  E2E_PHASE=claim forge_sim script/RunSepoliaE2E.s.sol:RunSepoliaE2E --sender "$BUYER" \
-    | grep -E "^\s*\[|claim #|Recovery|Economics|NOTE" || true
+  local out
+  out=$(E2E_PHASE=claim forge_sim script/RunSepoliaE2E.s.sol:RunSepoliaE2E --sender "$BUYER") || die "claim dry run failed: $out"
+  echo "$out" | grep -E "^\s*\[|claim #|Recovery|Economics|NOTE" || true
   echo "$GAS_NOTE"
   confirm "Send steps 4-6 signed by buyer and verifier (claim, approval, atomic settlement)?"
   echo "forge asks for the keystore passwords in this order: $BUYER_ALIAS, $VERIFIER_ALIAS"
-  # shellcheck disable=SC2046
+  signers "$BUYER_ALIAS" "$VERIFIER_ALIAS"
   E2E_PHASE=claim forge_send script/RunSepoliaE2E.s.sol:RunSepoliaE2E \
-    $(signers "$BUYER_ALIAS" "$VERIFIER_ALIAS") --sender "$BUYER"
+    "${SIGNER_ARGS[@]}" --sender "$BUYER"
 }
 
 smoke() {
   say "direct ETH transfer smoke test"
+  local log="$ROOT/contracts/deployments/11155111-transfers.json"
+  local previous receipt tx
+  previous=$(node -e '
+    const fs = require("fs"); const [file, runId] = process.argv.slice(1);
+    const rows = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
+    const row = rows.find(r => r.runId === runId && r.label === "ETH transfer buyer -> verifier (0.001 ETH)");
+    if (row) process.stdout.write(row.hash);
+  ' "$log" "$E2E_RUN_ID")
+  if [ -n "$previous" ]; then
+    receipt=$(cast receipt "$previous" --rpc-url "$RPC" --json) || die "recorded smoke transfer $previous has no receipt; inspect before retrying"
+    tx=$(cast tx "$previous" --rpc-url "$RPC" --json) || die "recorded smoke transfer $previous has no transaction; inspect before retrying"
+    node -e '
+      const [receipt, tx, from, to] = process.argv.slice(1);
+      const r = JSON.parse(receipt), t = JSON.parse(tx);
+      if (BigInt(r.status) !== 1n || t.from.toLowerCase() !== from.toLowerCase()
+          || t.to.toLowerCase() !== to.toLowerCase() || BigInt(t.value) !== 1000000000000000n)
+        process.exit(1);
+    ' "$receipt" "$tx" "$BUYER" "$VERIFIER" || die "recorded smoke transfer $previous does not match the expected successful transfer"
+    echo "smoke transfer already confirmed for $E2E_RUN_ID: $previous"
+    echo "$EXPLORER/tx/$previous"
+    return
+  fi
   echo "source      $BUYER ($BUYER_ALIAS), balance $(eth "$BUYER") ETH"
   echo "destination $VERIFIER ($VERIFIER_ALIAS)"
   echo "amount      0.001 ETH, gas 21000 x $(cast gas-price --rpc-url "$RPC") wei"
+  if [ "$SIGNER_MODE" = keystore ]; then
+    local actual
+    actual=$(cast wallet address --keystore "$KEYSTORES/$BUYER_ALIAS")
+    [ "${actual,,}" = "${BUYER,,}" ] || die "$BUYER_ALIAS resolves to $actual, but config expects $BUYER"
+  fi
   confirm "Send 0.001 ETH from buyer to verifier?"
   local out hash
-  local from=(--account "$BUYER_ALIAS")
+  local from=(--keystore "$KEYSTORES/$BUYER_ALIAS")
   [ "$SIGNER_MODE" = unlocked ] && from=(--unlocked --from "$BUYER")
   out=$(cast send "$VERIFIER" --value 0.001ether "${from[@]}" --rpc-url "$RPC" --json)
-  hash=$(printf '%s' "$out" | node -p 'JSON.parse(require("fs").readFileSync(0,"utf8")).transactionHash')
+  hash=$(printf '%s' "$out" | node -e '
+    const r = JSON.parse(require("fs").readFileSync(0,"utf8"));
+    if (BigInt(r.status) !== 1n || !r.transactionHash) process.exit(1);
+    process.stdout.write(r.transactionHash);
+  ') || die "smoke transfer did not receive a successful receipt; inspect the cast output before retrying"
   mkdir -p "$ROOT/contracts/deployments"
   node -e '
-    const fs = require("fs"); const [file, hash, from, to] = process.argv.slice(1);
+    const fs = require("fs"); const [file, runId, hash, from, to] = process.argv.slice(1);
     const list = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
-    list.push({ label: "ETH transfer buyer -> verifier (0.001 ETH)", hash, from, to });
+    list.push({ runId, label: "ETH transfer buyer -> verifier (0.001 ETH)", hash, from, to });
     fs.writeFileSync(file, JSON.stringify(list, null, 2) + "\n");
-  ' "$ROOT/contracts/deployments/11155111-transfers.json" "$hash" "$BUYER" "$VERIFIER"
+  ' "$log" "$E2E_RUN_ID" "$hash" "$BUYER" "$VERIFIER"
   echo "tx $hash"
   echo "$EXPLORER/tx/$hash"
 }

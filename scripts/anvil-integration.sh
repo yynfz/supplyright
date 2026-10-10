@@ -19,14 +19,18 @@ export PATH="$HOME/.foundry/bin:$PATH"
 cd "$ROOT/contracts"
 
 BACKUP="$(mktemp -d)"
+BACKUP_REAL="$(cd "$BACKUP" && pwd -P)"
 for f in deployments/31337.json deployments/31337-demo.json; do [ -f "$f" ] && cp "$f" "$BACKUP/"; done
 
-anvil --port "$PORT" --chain-id 31337 --silent &
+RUST_LOG=error anvil --port "$PORT" --chain-id 31337 --silent &
 ANVIL_PID=$!
 cleanup() {
   kill "$ANVIL_PID" 2>/dev/null || true
   rm -f deployments/31337.json deployments/31337-demo.json
   for f in "$BACKUP"/*; do [ -e "$f" ] && cp "$f" deployments/; done
+  actual_backup="$(cd "$BACKUP" && pwd -P)" || { echo "error: backup directory disappeared" >&2; exit 1; }
+  [ "${actual_backup,,}" = "${BACKUP_REAL,,}" ] && [ "$actual_backup" != / ] \
+    || { echo "error: refusing to remove a path other than the mktemp backup root" >&2; exit 1; }
   rm -rf "$BACKUP"
 }
 trap cleanup EXIT
@@ -45,7 +49,8 @@ script() { forge script "$@" --rpc-url "$RPC"; }
 START=$(date +%s)
 
 step "Deploy (deployer #0) + role matrix"
-script script/Deploy.s.sol:Deploy --broadcast --slow | grep -E "deployed|role|vault|claimManager" || true
+out=$(script script/Deploy.s.sol:Deploy --broadcast --slow) || fail "Deploy script failed: $out"
+echo "$out" | grep -E "deployed|role|vault|claimManager" || true
 VAULT=$(node -p "require('./deployments/31337.json').vault")
 CLAIMS=$(node -p "require('./deployments/31337.json').claimManager")
 RIGHTS=$(node -p "require('./deployments/31337.json').supplyRightNFT")
@@ -57,12 +62,14 @@ echo "$out" | grep -E "grants sent|verified" || true
 echo "$out" | grep -q "role grants sent: 0" || fail "SetupRoles re-sent grants"
 
 step "E2E phase setup (admin, buyer, provider)"
-E2E_PHASE=setup E2E_DEADLINE_DELAY=60 script script/RunSepoliaE2E.s.sol:RunSepoliaE2E --broadcast --slow | grep -E "^\[|#" || true
+out=$(E2E_PHASE=setup E2E_DEADLINE_DELAY=60 script script/RunSepoliaE2E.s.sol:RunSepoliaE2E --broadcast --slow) || fail "E2E setup script failed: $out"
+echo "$out" | grep -E "^\[|#" || true
 [ "$(cast balance "$VAULT" --rpc-url "$RPC")" = "10000000000000000" ] || fail "vault escrow is not 0.010 ETH"
 
 step "E2E phase claim before the deadline sends nothing"
 nonce_before=$(cast nonce "$BUYER" --rpc-url "$RPC")
-E2E_PHASE=claim script script/RunSepoliaE2E.s.sol:RunSepoliaE2E --broadcast --slow | grep -E "deadline" || true
+out=$(E2E_PHASE=claim script script/RunSepoliaE2E.s.sol:RunSepoliaE2E --broadcast --slow) || fail "early claim script failed: $out"
+echo "$out" | grep -E "deadline" || true
 [ "$(cast nonce "$BUYER" --rpc-url "$RPC")" = "$nonce_before" ] || fail "claim sent before the deadline"
 
 step "advance Anvil time past the delivery deadline"
@@ -71,7 +78,8 @@ cast rpc evm_increaseTime 61 --rpc-url "$RPC" >/dev/null && cast rpc evm_mine --
 step "E2E phase claim (buyer, verifier) - claim, verification, atomic settlement"
 buyer_before=$(cast balance "$BUYER" --rpc-url "$RPC")
 buyer_nonce=$(cast nonce "$BUYER" --rpc-url "$RPC")
-E2E_PHASE=claim script script/RunSepoliaE2E.s.sol:RunSepoliaE2E --broadcast --slow | grep -E "^\[|#" || true
+out=$(E2E_PHASE=claim script script/RunSepoliaE2E.s.sol:RunSepoliaE2E --broadcast --slow) || fail "E2E claim script failed: $out"
+echo "$out" | grep -E "^\[|#" || true
 claim_tx=$(node -e '
   const r = require("./broadcast/RunSepoliaE2E.s.sol/31337/run-latest.json");
   const t = r.transactions.find(t => t.transaction.from.toLowerCase() === process.argv[1].toLowerCase());
@@ -79,7 +87,8 @@ claim_tx=$(node -e '
 
 step "re-run after settlement: resume must not duplicate anything"
 verifier_nonce=$(cast nonce "$VERIFIER" --rpc-url "$RPC")
-E2E_PHASE=claim script script/RunSepoliaE2E.s.sol:RunSepoliaE2E --broadcast --slow | grep -E "Economics|NOTE" || true
+out=$(E2E_PHASE=claim script script/RunSepoliaE2E.s.sol:RunSepoliaE2E --broadcast --slow) || fail "settlement resume script failed: $out"
+echo "$out" | grep -E "Economics|NOTE" || true
 [ "$(cast nonce "$VERIFIER" --rpc-url "$RPC")" = "$verifier_nonce" ] || fail "settlement was sent twice"
 
 step "verify final state with cast"

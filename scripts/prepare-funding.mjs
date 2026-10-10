@@ -19,6 +19,7 @@
  * No transfer is sent without the confirmation prompt.
  */
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline/promises";
 import { spawnSync } from "node:child_process";
@@ -34,7 +35,9 @@ const rpcUrl = process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publ
 const args = process.argv.slice(2);
 const opt = (name) => {
   const i = args.indexOf(name);
-  return i >= 0 ? args[i + 1] : undefined;
+  if (i < 0) return undefined;
+  if (!args[i + 1] || args[i + 1].startsWith("--")) throw new Error(`${name} needs a value`);
+  return args[i + 1];
 };
 const execute = args.includes("--execute");
 
@@ -73,6 +76,7 @@ const roundUp = (wei) => {
 };
 
 async function main() {
+  if (execute && args.includes("--json")) throw new Error("--execute and --json cannot be combined");
   const chainId = BigInt(await rpc("eth_chainId"));
   if (chainId !== BigInt(config.chainId)) throw new Error(`RPC is chain ${chainId}, expected ${config.chainId}`);
   const gasPrice = BigInt(await rpc("eth_gasPrice"));
@@ -81,9 +85,13 @@ async function main() {
   const baseFee = BigInt(block.baseFeePerGas ?? "0x0");
   const currentMaxFee = 2n * baseFee + priority > gasPrice ? 2n * baseFee + priority : gasPrice;
   const planGwei = opt("--gas-price-gwei");
+  if (planGwei !== undefined && (!Number.isFinite(Number(planGwei)) || Number(planGwei) <= 0 || Number(planGwei) > 1_000_000)) {
+    throw new Error("--gas-price-gwei must be a positive finite number at most 1000000");
+  }
   const planPrice = planGwei
     ? BigInt(Math.round(Number(planGwei) * 1e9))
     : (10n * currentMaxFee > GWEI / 50n ? 10n * currentMaxFee : GWEI / 50n);
+  if (planPrice <= 0n) throw new Error("planning gas price must be at least 1 wei");
 
   const roles = [
     { key: "admin", gas: withMargin(BigInt(gasProfile.admin)), extra: 0n, why: "mint/activate/delivery" },
@@ -100,13 +108,27 @@ async function main() {
     r.need = r.gas * planPrice + r.extra;
     r.topUp = r.balance >= r.need ? 0n : roundUp(r.need - r.balance);
   }
+  const configuredAddresses = [config.deployer.address, ...roles.map((r) => r.address)];
+  if (!configuredAddresses.every((a) => /^0x[0-9a-fA-F]{40}$/.test(a))
+      || new Set(configuredAddresses.map((a) => a.toLowerCase())).size !== configuredAddresses.length) {
+    throw new Error("deployer and role wallet addresses must be valid and distinct; nothing sent");
+  }
 
   const sourceAlias = opt("--from") || config.deployer.keystoreAlias;
   const sourceAddress = sourceAlias === config.deployer.keystoreAlias ? config.deployer.address : opt("--from-address");
   if (!sourceAddress) throw new Error("--from <alias> needs --from-address <its public address>");
+  if (!/^0x[0-9a-fA-F]{40}$/.test(sourceAddress)) throw new Error("source address is not a valid Ethereum address");
+  if (roles.some((r) => r.address.toLowerCase() === sourceAddress.toLowerCase())) {
+    throw new Error("funding source must be separate from the four destination role wallets");
+  }
   const deployerBalance = BigInt(await rpc("eth_getBalance", [config.deployer.address, "latest"]));
   const deployGas = withMargin(BigInt(gasProfile.deployer) - LOCAL_ONLY_DEPLOY_GAS);
-  const deployed = Boolean(config.contracts?.vault) && (await rpc("eth_getCode", [config.contracts.vault, "latest"])) !== "0x";
+  const deploymentFile = path.join(root, "contracts/deployments/11155111.json");
+  const recordedContracts = fs.existsSync(deploymentFile) ? JSON.parse(fs.readFileSync(deploymentFile, "utf8")) : null;
+  const contractKeys = ["supplyRightNFT", "protectionNFT", "recoveryClaimNFT", "vault", "claimManager"];
+  const contractAddresses = contractKeys.map((k) => config.contracts?.[k] || recordedContracts?.[k]);
+  const deployed = contractAddresses.length === 5 && contractAddresses.every((a) => /^0x[0-9a-fA-F]{40}$/.test(a))
+    && (await Promise.all(contractAddresses.map((a) => rpc("eth_getCode", [a, "latest"])))).every((code) => code !== "0x");
   const deployerNeed = deployed ? 0n : deployGas * planPrice;
   const transfers = roles.filter((r) => r.topUp > 0n);
   const transferGasCost = BigInt(transfers.length) * TRANSFER_GAS * planPrice;
@@ -174,6 +196,20 @@ async function main() {
   if (shortfall > 0n) throw new Error("source balance insufficient; nothing sent");
   if (transfers.length === 0) return;
 
+  // A --from-address is a claim about the alias, not proof of it. Unlock the source
+  // interactively and compare before displaying the final confirmation or spending.
+  const cast = process.env.CAST || "cast";
+  const keystoreDir = process.env.FOUNDRY_KEYSTORE_DIR || path.join(os.homedir(), ".foundry", "keystores");
+  const sourceKeystore = path.join(keystoreDir, sourceAlias);
+  if (!fs.existsSync(sourceKeystore)) throw new Error(`source keystore is missing: ${sourceKeystore}`);
+  console.log(`\nVerify funding source ${sourceAlias} (hidden keystore password prompt):`);
+  const addressResult = spawnSync(cast, ["wallet", "address", "--keystore", sourceKeystore], {
+    stdio: ["inherit", "pipe", "inherit"], encoding: "utf8",
+  });
+  if (addressResult.status !== 0 || addressResult.stdout.trim().toLowerCase() !== sourceAddress.toLowerCase()) {
+    throw new Error(`keystore ${sourceAlias} does not resolve to planned source ${sourceAddress}; nothing sent`);
+  }
+
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const answer = await rl.question(`\nSend the ${transfers.length} transfer(s) above from ${sourceAddress}? Type "yes" to confirm: `);
   rl.close();
@@ -181,12 +217,11 @@ async function main() {
     console.log("Not confirmed - nothing sent.");
     return;
   }
-  const cast = process.env.CAST || "cast";
   for (const r of transfers) {
     console.log(`\n-> ${fmt(r.topUp)} ETH to ${r.key} ${r.address} (cast asks for the ${sourceAlias} keystore password)`);
     const res = spawnSync(
       cast,
-      ["send", r.address, "--value", r.topUp.toString(), "--account", sourceAlias, "--rpc-url", rpcUrl, "--json"],
+      ["send", r.address, "--value", r.topUp.toString(), "--keystore", sourceKeystore, "--rpc-url", rpcUrl, "--json"],
       { stdio: ["inherit", "pipe", "inherit"], encoding: "utf8" },
     );
     if (res.status !== 0) throw new Error(`transfer to ${r.key} failed; stopping (later transfers not sent)`);

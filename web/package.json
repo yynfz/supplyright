@@ -10,7 +10,7 @@
     "sync:contracts": "node scripts/sync-contracts.mjs",
     "seed:offchain": "node --env-file=.env.local scripts/seed-offchain.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/*.test.ts",
+    "test": "tsx --test tests/*.test.ts tests/*.test.mjs",
     "test:protocol": "tsx scripts/smoke-protocol.ts"
   },
   "dependencies": {

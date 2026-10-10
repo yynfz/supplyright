@@ -1,10 +1,10 @@
 # Sepolia wallets
 
-SupplyRight on Ethereum Sepolia (chain `11155111`) uses one independent EOA per role, kept as an encrypted Foundry keystore outside the repository, plus the existing deployer. Suppliers stay offchain and need no wallet. Collateral, payouts and gas are native Sepolia ETH (no value).
+SupplyRight on Ethereum Sepolia (chain `11155111`) uses one independent EOA per role, kept as an encrypted Foundry keystore outside the repository, plus the existing deployer. Suppliers stay offchain and need no wallet. Collateral, payouts and gas use native Sepolia ETH, not a mock token.
 
 ## Role → address → keystore
 
-| Role | Public address | Keystore alias | Onchain authority (granted by `SupplyRightRoles`) |
+| Role | Configured public address | Keystore alias | Planned onchain authority (granted by `SupplyRightRoles`) |
 | --- | --- | --- | --- |
 | Deployer (existing) | `0x959a7CDa30042C26deAAE4Cf27Cc319dFE2CB5B8` | `supplyright-sepolia-deployer.json` | `DEFAULT_ADMIN_ROLE` on all five contracts at deployment; sends the role grants |
 | Registrar / Admin | `0x5b0D0561fa0FFeA6a45cAC5B95d593C3CCcA17C6` | `supplyright-admin` | SupplyRightNFT: `DEFAULT_ADMIN`, `REGISTRAR`, `TRANSFER_APPROVER` · RecoveryClaimNFT: `DEFAULT_ADMIN`, `TRANSFER_APPROVER` · ProtectionNFT, Vault, ClaimManager: `DEFAULT_ADMIN` |
@@ -12,7 +12,7 @@ SupplyRight on Ethereum Sepolia (chain `11155111`) uses one independent EOA per 
 | Protection Provider | `0x1Abf1953e7176D4265eC7887A8B34C149d091d15` | `supplyright-provider` | SupplyProtectionVault: `PROVIDER_ROLE` |
 | Independent Verifier | `0xfF84e00835e2902C5d2336459da69BB70E81d9C8` | `supplyright-verifier` | SupplyClaimManager: `VERIFIER_ROLE` (independence from buyer and provider is checked onchain) |
 
-Only public addresses are stored, in [`config/wallets.sepolia.json`](../config/wallets.sepolia.json), together with the chain id, the RPC env var name (`SEPOLIA_RPC_URL`), the explorer and, once deployed and verified onchain, the contract addresses. The four role wallets were created on 10 October 2026 with `cast wallet new` (Foundry 1.8.5). The addresses in an earlier commit of this file belonged to keystores that are not on this machine and had never been used (0 ETH, nonce 0), so they were replaced.
+Only public addresses are stored, in [`config/wallets.sepolia.json`](../config/wallets.sepolia.json), together with the chain id, the RPC env var name (`SEPOLIA_RPC_URL`), the explorer and, once deployed and verified onchain, the contract addresses. The four encrypted role keystore files are present locally; the setup script decrypts each one interactively to verify its configured address. No password or key is stored in the config. The addresses in an earlier commit belonged to keystores that are not on this machine and had never been used (0 ETH, nonce 0), so they were replaced.
 
 The deployer keeps `DEFAULT_ADMIN_ROLE` as a bootstrap admin. To leave the admin wallet as the only admin, run `SetupRoles` once with `RENOUNCE_DEPLOYER_ADMIN=true` after the matrix is verified.
 
@@ -24,7 +24,7 @@ bash scripts/setup-supplyright-wallets.sh
 
 On Windows PowerShell: `& 'C:\Program Files\Git\bin\bash.exe' scripts/setup-supplyright-wallets.sh`.
 
-For each alias the script runs `cast wallet new ~/.foundry/keystores <alias> --json`. Cast asks for the keystore password in a hidden prompt; the script never sees, passes, stores or echoes it. An existing keystore with the same name, and every other file in the keystore directory (the deployer, other projects), is left untouched; `--force` is never used. The script refuses a keystore directory inside the repository, writes only the public address into the config, and finally checks that all addresses are valid and distinct from each other and from the deployer.
+For a missing alias the script runs `cast wallet new ~/.foundry/keystores <alias> --json`. Cast asks for the keystore password in a hidden prompt; the script never sees, passes, stores or echoes it. For an existing alias, it leaves the encrypted file untouched and uses `cast wallet address --keystore` to verify the address after a hidden password prompt. A mismatch with the config stops the script without silently remapping a possibly deployed role. Other files in the keystore directory (the deployer, other projects) are untouched; `--force` is never used. The script refuses a keystore directory inside the repository, writes only public addresses, and finally checks that all addresses are valid and distinct from each other and from the deployer.
 
 Check a keystore's address at any time (asks for its password):
 
@@ -46,7 +46,9 @@ node scripts/prepare-funding.mjs              # plan only
 node scripts/prepare-funding.mjs --execute    # plan, confirm with "yes", then cast send per top-up
 ```
 
-The planner reads every balance, the current gas price and the gas profile measured on a Sepolia fork (`config/gas-profile.sepolia-fork.json`, + 10%). It then prints the source, destination, amount, transfer gas and the total each wallet and the source need. Nothing is sent without the typed confirmation, and cast asks for the source keystore password for each transfer.
+The planner reads every balance, the RPC's current gas price and the gas units measured on a Sepolia fork (`config/gas-profile.sepolia-fork.json`, + 10%). It then prints the source, destination, amount, transfer gas and the total each wallet and the source need. With `--execute`, it first verifies that the unlocked source keystore resolves to the displayed source address, then asks for an explicit `yes` before sending. Cast asks for the source keystore password for each transfer. Re-running the planner recomputes top-ups from current balances after any partial funding run. `FOUNDRY_KEYSTORE_DIR` can point to a secure directory outside the repository.
+
+The rehearsal calls this planner against a **local Anvil fork**, whose gas quote can be much higher than the live Sepolia quote. Its larger fork-priced balances show that the rehearsal had enough ETH under that local quote; they do not establish the live funding amount. Run the planner with the live Sepolia RPC again immediately before funding.
 
 Sepolia's Glamsterdam upgrade (6 October 2026, EIP-8037) made contract and storage creation about 7× more expensive than on a plain local chain. Deploying the five contracts takes ~99M gas; the role wallets need 1.4–2.9M gas each. Gas prices are very low (~0.001 gwei on 10 October 2026), so the ETH needed is dominated by the provider's 0.010 ETH escrow:
 
@@ -58,4 +60,4 @@ Sepolia's Glamsterdam upgrade (6 October 2026, EIP-8037) made contract and stora
 | verifier | 0.0005 ETH | approval + settlement |
 | deployer | ≥ 0.0152 ETH total | the four top-ups + ~0.0022 ETH deployment gas at a 0.02 gwei planning price |
 
-On 10 October 2026 every one of these wallets held 0 Sepolia ETH, so the deployer must first receive at least ~0.016 Sepolia ETH (0.02 recommended) from a faucet or another wallet.
+On 10 October 2026 every one of these wallets held 0 Sepolia ETH. A read-only live plan at a 0.02 gwei planning price required 0.01518218856 ETH at the deployer (including all four top-ups and its gas buffer). This amount changes with gas prices, balances and the gas profile, so use a fresh live plan before funding.

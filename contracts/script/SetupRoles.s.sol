@@ -23,7 +23,9 @@ contract SetupRoles is ScriptBase {
     function run() external {
         SupplyRightRoles.Protocol memory p = _protocol();
         SupplyRightRoles.Wallets memory w = _roleWallets();
-        Role callerRole = _eq(vm.envOr("SETUP_ROLES_AS", string("deployer")), "admin") ? Role.Admin : Role.Deployer;
+        string memory asRole = vm.envOr("SETUP_ROLES_AS", string("deployer"));
+        require(_eq(asRole, "deployer") || _eq(asRole, "admin"), "SETUP_ROLES_AS must be deployer | admin");
+        Role callerRole = _eq(asRole, "admin") ? Role.Admin : Role.Deployer;
         address caller = _wallet(callerRole);
         bool renounce = vm.envOr("RENOUNCE_DEPLOYER_ADMIN", false);
 

@@ -15,7 +15,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createPublicClient, decodeEventLog, formatEther, http, keccak256, toBytes } from "viem";
+import { createPublicClient, decodeEventLog, decodeFunctionData, formatEther, http, keccak256, toBytes } from "viem";
+import { SCENARIO_STEPS, explorerReference, isLocalReport, verifyScenarioReceipts, verifySmokeTransfer } from "./sepolia-e2e-evidence.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const rpcUrl = process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com";
@@ -24,6 +25,7 @@ const outFile = path.resolve(root, process.env.REPORT_OUT || "docs/SEPOLIA-E2E-R
 const label = process.env.REPORT_LABEL || "";
 const config = JSON.parse(fs.readFileSync(path.join(root, "config/wallets.sepolia.json"), "utf8"));
 const explorer = config.explorer;
+const localReport = isLocalReport(rpcUrl, label);
 const CHAIN = 11155111;
 
 const abiOf = (name) => JSON.parse(fs.readFileSync(path.join(root, `contracts/out/${name}.sol/${name}.json`), "utf8")).abi;
@@ -42,18 +44,9 @@ const roles = {
 };
 const roleOf = (a) => roles[String(a).toLowerCase()] ?? String(a);
 const eth = (wei) => `${formatEther(wei)} ETH`;
-const link = (kind, v) => `[${kind === "tx" ? `${v.slice(0, 10)}…${v.slice(-6)}` : v}](${explorer}/${kind}/${v})`;
+const link = (kind, v) => explorerReference(kind, v, explorer, localReport);
 
-const STEP = {
-  mintSupplyRight: "1 · admin mints SupplyRight NFT to buyer",
-  activate: "1 · admin records supplier acknowledgement",
-  recordDelivery: "1 · admin records delivery note (10/50 MT)",
-  requestProtection: "2 · buyer requests protection",
-  fundAndApproveProtection: "3 · provider sends 0.010 ETH escrow + activates",
-  submitClaim: "4 · buyer files claim",
-  approveClaim: "5 · verifier approves claim",
-  settleClaim: "6 · atomic settlement",
-};
+const STEP = Object.fromEntries(SCENARIO_STEPS.map(({ key, label }) => [key, label]));
 
 function recordedTransactions() {
   const out = [];
@@ -72,7 +65,9 @@ function recordedTransactions() {
   }
   const transfers = path.join(root, `contracts/deployments/${CHAIN}-transfers.json`);
   if (fs.existsSync(transfers)) {
-    for (const t of JSON.parse(fs.readFileSync(transfers, "utf8"))) out.push({ group: "transfer", hash: t.hash, label: t.label });
+    for (const t of JSON.parse(fs.readFileSync(transfers, "utf8"))) {
+      out.push({ group: "transfer", runId: t.runId, hash: t.hash, label: `${t.label} [${t.runId ?? "unscoped"}]` });
+    }
   }
   const seen = new Set();
   return out.filter((t) => !seen.has(t.hash) && seen.add(t.hash));
@@ -99,7 +94,7 @@ async function main() {
   if (chainId !== CHAIN) throw new Error(`RPC chain ${chainId} is not Sepolia`);
   const contracts = config.contracts;
   const problems = [];
-  const warnings = []; // reverted attempts that a later successful transaction superseded stay visible here
+  const warnings = [];
   if (!contracts?.vault) problems.push("contracts are not deployed (config/wallets.sepolia.json has no addresses)");
 
   const txs = recordedTransactions();
@@ -107,16 +102,30 @@ async function main() {
   for (const t of txs) {
     const r = await client.getTransactionReceipt({ hash: t.hash }).catch(() => null);
     if (!r) {
-      problems.push(`no receipt onchain for ${t.hash} (${t.label})`);
+      warnings.push(`no receipt onchain for recorded ${t.hash} (${t.label})`);
       rows.push({ ...t, status: "NOT FOUND" });
       continue;
+    }
+    const transaction = await client.getTransaction({ hash: t.hash }).catch(() => null);
+    if (!transaction) warnings.push(`no transaction details onchain for ${t.hash} (${t.label})`);
+    const contractKey = transaction?.to && Object.entries(contracts ?? {}).find(([, address]) => address && address.toLowerCase() === transaction.to.toLowerCase())?.[0];
+    let decoded = null;
+    if (transaction && contractKey && abis[contractKey]) {
+      try { decoded = decodeFunctionData({ abi: abis[contractKey], data: transaction.input }); } catch {}
     }
     if (r.status !== "success") warnings.push(`${t.hash} (${t.label}) reverted onchain`);
     rows.push({
       ...t,
       status: r.status,
       block: r.blockNumber,
+      transactionIndex: r.transactionIndex,
       from: roleOf(r.from),
+      fromAddress: r.from,
+      to: transaction?.to ?? r.to,
+      input: transaction?.input,
+      value: transaction?.value,
+      functionName: decoded?.functionName,
+      args: decoded?.args,
       gasUsed: r.gasUsed,
       fee: r.gasUsed * r.effectiveGasPrice,
       events: contracts?.vault ? decodeLogs(r.logs, contracts) : [],
@@ -124,13 +133,33 @@ async function main() {
     });
   }
 
-  for (const step of new Set(rows.map((r) => r.label))) {
-    if (!rows.some((r) => r.label === step && r.status === "success")) problems.push(`"${step}" has no successful transaction`);
-  }
-
   let state = null;
-  if (contracts?.vault && (await client.getCode({ address: contracts.vault }))) {
+  const contractCode = Object.fromEntries(await Promise.all(Object.keys(abis).map(async (key) => [
+    key,
+    contracts?.[key] ? !!(await client.getCode({ address: contracts[key] })) : false,
+  ])));
+  for (const [key, present] of Object.entries(contractCode)) {
+    if (!present) problems.push(`${key} has no contract code at the configured address`);
+  }
+  if (Object.values(contractCode).every(Boolean)) {
     const read = (key, functionName, args = []) => client.readContract({ address: contracts[key], abi: abis[key], functionName, args });
+    const defaultAdmin = `0x${"00".repeat(32)}`;
+    const role = (name) => keccak256(toBytes(name));
+    for (const key of Object.keys(abis)) {
+      if (!(await read(key, "hasRole", [defaultAdmin, config.wallets.admin.address]))) {
+        problems.push(`admin wallet lacks DEFAULT_ADMIN_ROLE on ${key}`);
+      }
+    }
+    for (const [key, roleName, wallet] of [
+      ["supplyRightNFT", "REGISTRAR_ROLE", "admin"],
+      ["supplyRightNFT", "BUYER_ROLE", "buyer"],
+      ["vault", "PROVIDER_ROLE", "provider"],
+      ["claimManager", "VERIFIER_ROLE", "verifier"],
+    ]) {
+      if (!(await read(key, "hasRole", [role(roleName), config.wallets[wallet].address]))) {
+        problems.push(`${wallet} wallet lacks ${roleName} on ${key}`);
+      }
+    }
     const wallets = [["deployer", config.deployer.address], ...Object.entries(config.wallets).map(([k, w]) => [k, w.address])];
     const holdings = [];
     for (const [role, address] of wallets) {
@@ -158,6 +187,7 @@ async function main() {
       e2e = { rightId, owner, statusName, sr };
       if (sr.protectionId > 0n) {
         e2e.protection = await read("vault", "getProtection", [sr.protectionId]);
+        e2e.requestId = e2e.protection.requestId;
         e2e.protectionOwner = await read("protectionNFT", "ownerOf", [sr.protectionId]);
       }
       const ids = await read("claimManager", "claimsOfSupplyRight", [rightId]);
@@ -171,8 +201,26 @@ async function main() {
     if (vault.balance < vault.free + vault.locked) problems.push("vault ETH balance is below its accounted collateral");
   }
 
+  const context = {
+    runId,
+    contracts: contracts ?? {},
+    wallets: Object.fromEntries(Object.entries(config.wallets).map(([key, wallet]) => [key, wallet.address])),
+    rightId: state?.e2e?.rightId,
+    requestId: state?.e2e?.requestId,
+    protectionId: state?.e2e?.sr.protectionId,
+    claimId: state?.e2e?.claimId,
+  };
+  const evidence = verifyScenarioReceipts(rows, context);
+  problems.push(...evidence.problems);
+  const smoke = verifySmokeTransfer(rows, runId, config.wallets.buyer.address, config.wallets.verifier.address);
+  if (!smoke) problems.push("no confirmed 0.001 ETH buyer → verifier smoke transfer receipt");
+  const funding = evidence.selected.find((row) => row.step === "fundAndApproveProtection");
+  if (funding && funding.value !== 10_000_000_000_000_000n) {
+    warnings.push(`provider sent ${eth(funding.value)} in the activation transaction; 0.010 ETH coverage used existing free collateral for the remainder`);
+  }
+
   // Settlement evidence from the settle receipt itself.
-  const settle = rows.find((r) => r.label === STEP.settleClaim && r.status === "success");
+  const settle = evidence.selected.find((row) => row.step === "settleClaim");
   let payout = null;
   if (settle) {
     for (const log of settle.logs) {
@@ -188,18 +236,21 @@ async function main() {
   if (settled) {
     if (roleOf(state.e2e.recoveryOwner) !== "provider") problems.push("Recovery Claim NFT is not owned by the provider wallet");
     if (roleOf(state.e2e.owner) !== "buyer") problems.push("SupplyRight NFT is not owned by the buyer wallet");
-    if (!payout || roleOf(payout.beneficiary) !== "buyer" || payout.amount !== claim.payoutAmount) {
+    if (!payout || roleOf(payout.beneficiary) !== "buyer" || payout.amount !== claim.payoutAmount || payout.protectionId !== state.e2e.sr.protectionId) {
       problems.push("settlement receipt does not show the payout to the buyer");
     }
   }
+  if (!settled) problems.push(`claim for run ${runId} is not settled onchain`);
   const verdict = problems.length ? "FAIL" : settled ? "PASS" : "INCOMPLETE";
 
   const md = [];
   md.push(`# SupplyRight Sepolia E2E results${label ? ` (${label})` : ""}`, "");
   md.push(`Generated ${new Date().toISOString()} by \`web/scripts/sepolia-e2e-report.mjs\` from onchain receipts and live reads.`);
   md.push(`Chain ${chainId} · run id \`${runId}\` · verdict **${verdict}**`, "");
+  if (localReport) md.push("**Local RPC or fork report:** hashes and balances were verified against the configured RPC. Public Sepolia explorer links are omitted.", "");
   if (problems.length) md.push("Problems:", "", ...problems.map((p) => `- ${p}`), "");
-  if (warnings.length) md.push("Reverted attempts (superseded by a later successful transaction):", "", ...warnings.map((w) => `- ${w}`), "");
+  if (warnings.length) md.push("Other recorded transaction warnings:", "", ...warnings.map((w) => `- ${w}`), "");
+  md.push(`Confirmed receipts tied to this run: ${evidence.selected.length}/${SCENARIO_STEPS.length} scenario actions${smoke ? "; direct transfer confirmed" : "; direct transfer missing"}.`, "");
   if (state) {
     md.push("## Wallets", "", "| Role | Public address | ETH balance | SupplyRight NFT | Protection NFT | Recovery Claim NFT |", "| --- | --- | --- | --- | --- | --- |");
     for (const h of state.holdings) {
@@ -218,6 +269,7 @@ async function main() {
       }
       if (settled) {
         md.push(`- Recovery Claim NFT #${claim.recoveryTokenId} owner ${roleOf(e.recoveryOwner)}`);
+        if (funding) md.push(`- Provider activation sent ${eth(funding.value)} from the connected provider wallet to the vault.`);
         if (payout) md.push(`- Settlement receipt: PayoutExecuted ${eth(payout.amount)} to ${roleOf(payout.beneficiary)}, ${eth(payout.remainingLocked)} stays locked`);
         const matches = claim.payoutAmount === 8_000_000_000_000_000n && e.protection?.lockedAmount === 2_000_000_000_000_000n;
         md.push(`- Scenario check (0.008 ETH to buyer, 0.002 ETH remaining): ${matches ? "matches the contract outcome" : "the contract outcome differs; contract rules apply"}`);
@@ -225,11 +277,12 @@ async function main() {
       md.push("");
     }
   }
-  md.push("## Transactions (receipts fetched from the chain)", "", "| Step | Signer | Tx | Block | Status | Gas used | Fee | Events |", "| --- | --- | --- | --- | --- | --- | --- | --- |");
+  const selectedHashes = new Set([...evidence.selected.map((row) => row.hash), smoke?.hash].filter(Boolean));
+  md.push("## Transactions (receipts fetched from the chain)", "", "| Scope | Step | Signer | Tx | Block | Status | ETH sent | Gas used | Fee | Events |", "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const r of rows) {
-    md.push(`| ${r.label} | ${r.from ?? "-"} | ${link("tx", r.hash)} | ${r.block ?? "-"} | ${r.status} | ${r.gasUsed ?? "-"} | ${r.fee !== undefined ? eth(r.fee) : "-"} | ${(r.events ?? []).join(", ")} |`);
+    md.push(`| ${selectedHashes.has(r.hash) ? "selected run" : "other recorded"} | ${r.label} | ${r.from ?? "-"} | ${link("tx", r.hash)} | ${r.block ?? "-"} | ${r.status} | ${r.value === undefined || r.value === 0n ? "-" : eth(r.value)} | ${r.gasUsed ?? "-"} | ${r.fee !== undefined ? eth(r.fee) : "-"} | ${(r.events ?? []).join(", ")} |`);
   }
-  if (!rows.length) md.push("| _no broadcast transactions recorded yet_ | | | | | | | |");
+  if (!rows.length) md.push("| _no broadcast transactions recorded yet_ | | | | | | | | | |");
   md.push("");
   fs.writeFileSync(outFile, md.join("\n"));
   console.log(`verdict ${verdict}; ${rows.length} transactions checked; wrote ${path.relative(root, outFile)}`);

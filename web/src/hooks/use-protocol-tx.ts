@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { useAccount, usePublicClient, useSwitchChain, useWriteContract } from "wagmi";
+import { useAccount, usePublicClient, useWriteContract } from "wagmi";
 import type { Abi, Address, Hex, TransactionReceipt } from "viem";
 import { LOCAL_CHAIN_ID, txUrl } from "@/lib/chains";
 import { decodeTxError, type DecodedError } from "@/lib/protocol/errors";
@@ -39,10 +39,9 @@ export type TxRequest = {
  */
 export function useProtocolTx() {
   const { address, chainId: walletChainId, connector } = useAccount();
-  const { chainId } = useActiveChain();
+  const { chainId, deployment, wrongNetwork } = useActiveChain();
   const publicClient = usePublicClient({ chainId });
   const { writeContractAsync } = useWriteContract();
-  const { switchChainAsync } = useSwitchChain();
   const queryClient = useQueryClient();
   const [state, setState] = useState<TxState>({ phase: "idle" });
 
@@ -56,6 +55,14 @@ export function useProtocolTx() {
         toast.error("RPC belum siap.");
         return null;
       }
+      if (wrongNetwork || walletChainId !== chainId) {
+        toast.error("Ganti wallet ke jaringan protokol sebelum mengirim transaksi.");
+        return null;
+      }
+      if (!deployment || !Object.values(deployment).includes(req.address)) {
+        toast.error("Alamat kontrak tidak cocok dengan deployment aktif.");
+        return null;
+      }
       // Demo personas are Anvil's unlocked dev accounts; they must never sign anywhere but the local chain.
       if (connector?.type === "supplyrightPersona" && chainId !== LOCAL_CHAIN_ID) {
         toast.error("Persona demo hanya dapat bertransaksi di chain Anvil lokal. Hubungkan wallet Anda sendiri.");
@@ -65,8 +72,6 @@ export function useProtocolTx() {
       let hash: Hex | undefined;
       try {
         setState({ phase: "simulating", label: req.label, chainId });
-        if (walletChainId !== chainId) await switchChainAsync({ chainId });
-
         const call = {
           address: req.address,
           abi: req.abi as Abi,
@@ -78,7 +83,9 @@ export function useProtocolTx() {
 
         setState({ phase: "signing", label: req.label, chainId });
         toast.loading(`${req.label}: konfirmasi di wallet…`, { id: toastId });
-        hash = await writeContractAsync({ ...call, chainId } as never);
+        // Pin the request to the address that passed the onchain simulation. A wallet account change
+        // while the prompt is open must fail instead of silently signing as another connected account.
+        hash = await writeContractAsync({ ...call, account: address, chainId } as never);
 
         setState({ phase: "pending", label: req.label, chainId, hash });
         const link = txUrl(chainId, hash);
@@ -109,7 +116,7 @@ export function useProtocolTx() {
         return null;
       }
     },
-    [address, connector, publicClient, walletChainId, chainId, switchChainAsync, writeContractAsync, queryClient],
+    [address, connector, publicClient, walletChainId, chainId, deployment, wrongNetwork, writeContractAsync, queryClient],
   );
 
   const reset = useCallback(() => setState({ phase: "idle" }), []);

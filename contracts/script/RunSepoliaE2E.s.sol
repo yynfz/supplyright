@@ -8,7 +8,10 @@ import {SupplyRightNFT} from "../src/SupplyRightNFT.sol";
 import {
     SupplyStatus,
     SupplyRightData,
+    RequestStatus,
+    ProtectionRequest,
     ProtectionPosition,
+    ProtectionStatus,
     ClaimRecord,
     ClaimStatus,
     DefaultType
@@ -78,6 +81,7 @@ contract RunSepoliaE2E is ScriptBase {
             console2.log("no supply right for this run id yet; run E2E_PHASE=setup");
             return;
         }
+        _assertRight(rightId);
 
         uint256 protectionId = p.rights.getSupplyRight(rightId).protectionId;
         if (doSetup && protectionId == 0) protectionId = _fundProtection(rightId);
@@ -85,10 +89,13 @@ contract RunSepoliaE2E is ScriptBase {
             _report(rightId, 0, 0, "protection not active yet; run E2E_PHASE=setup");
             return;
         }
+        _assertProtection(rightId, protectionId);
 
         uint256 claimId = _latestClaim(rightId);
+        if (claimId != 0) _assertClaim(rightId, protectionId, claimId);
         if (doClaim) {
             if (claimId == 0) claimId = _fileClaim(rightId, protectionId);
+            if (claimId != 0) _assertClaim(rightId, protectionId, claimId);
             if (claimId != 0 && p.claims.getClaim(claimId).status == ClaimStatus.Submitted) _verify(claimId);
             if (claimId != 0 && p.claims.getClaim(claimId).status == ClaimStatus.Approved) _settle(claimId);
         }
@@ -118,6 +125,8 @@ contract RunSepoliaE2E is ScriptBase {
                 })
             );
             vm.stopBroadcast();
+        } else {
+            _assertRight(rightId);
         }
         SupplyRightData memory sr = p.rights.getSupplyRight(rightId);
         if (sr.status == SupplyStatus.Registered) {
@@ -127,6 +136,10 @@ contract RunSepoliaE2E is ScriptBase {
             vm.stopBroadcast();
         }
         if (p.rights.getSupplyRight(rightId).deliveredQuantity < DELIVERED) {
+            require(
+                p.rights.getSupplyRight(rightId).status == SupplyStatus.Active,
+                "E2E delivery note cannot be added after claim processing"
+            );
             console2.log("[1] admin records the delivery note: 10 of 50 MT delivered");
             _startBroadcastAs(Role.Admin);
             p.rights.recordDelivery(rightId, DELIVERED, _ref("DELIVERY-NOTE-1"));
@@ -146,6 +159,7 @@ contract RunSepoliaE2E is ScriptBase {
             requestId = p.vault.requestProtection(rightId, w.provider, COVERAGE, COVERAGE_BPS, expiry, _ref("TERMS"));
             vm.stopBroadcast();
         }
+        _assertRequest(rightId, requestId);
         uint256 free = p.vault.freeCollateral(w.provider);
         uint256 escrow = COVERAGE > free ? COVERAGE - free : 0;
         console2.log("[3] provider sends ETH escrow to the vault and activates protection, wei:", escrow);
@@ -233,6 +247,58 @@ contract RunSepoliaE2E is ScriptBase {
     // ---------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------
+
+    /// @dev A run id is public. Reject an existing PO whose economic terms or document references do not
+    ///      match this scenario before the admin, buyer, or provider signs another transaction.
+    function _assertRight(uint256 rightId) private view {
+        SupplyRightData memory sr = p.rights.getSupplyRight(rightId);
+        require(sr.buyer == w.buyer, "E2E PO buyer differs from this run");
+        require(sr.poRefHash == _ref("PO"), "E2E PO reference differs from this run");
+        require(sr.agreementHash == _ref("SUPPLY-AGREEMENT"), "E2E agreement differs from this run");
+        require(sr.supplierRefHash == _ref("SUPPLIER"), "E2E supplier differs from this run");
+        require(sr.contractValue == CONTRACT_VALUE && sr.orderedQuantity == ORDERED, "E2E PO economics differ");
+        require(sr.unit == bytes8("MT"), "E2E PO unit differs from this run");
+        require(sr.deliveredQuantity <= DELIVERED, "E2E delivery exceeds this run's report");
+        if (sr.status != SupplyStatus.Registered) {
+            require(sr.supplierAckHash == _ref("SUPPLIER-ACK"), "E2E supplier acknowledgement differs");
+        }
+    }
+
+    function _assertRequest(uint256 rightId, uint256 requestId) private view {
+        ProtectionRequest memory r = p.vault.getRequest(requestId);
+        require(r.status == RequestStatus.Pending, "E2E protection request is no longer pending");
+        require(r.supplyRightId == rightId && r.buyer == w.buyer, "E2E protection request belongs to another PO");
+        require(r.provider == w.provider, "E2E protection request designates another provider");
+        require(r.coverageAmount == COVERAGE && r.coverageBps == COVERAGE_BPS, "E2E protection terms differ");
+        require(r.termsHash == _ref("TERMS"), "E2E protection document differs");
+        require(r.expiresAt == p.rights.getSupplyRight(rightId).deliveryDeadline + 30 days, "E2E expiry differs");
+    }
+
+    function _assertProtection(uint256 rightId, uint256 protectionId) private view {
+        ProtectionPosition memory pos = p.vault.getProtection(protectionId);
+        require(pos.supplyRightId == rightId && pos.beneficiary == w.buyer, "E2E protection beneficiary differs");
+        require(pos.provider == w.provider, "E2E protection provider differs");
+        require(pos.coverageAmount == COVERAGE && pos.coverageBps == COVERAGE_BPS, "E2E coverage differs");
+        require(pos.termsHash == _ref("TERMS"), "E2E funded protection document differs");
+        require(pos.expiresAt == p.rights.getSupplyRight(rightId).deliveryDeadline + 30 days, "E2E funded expiry differs");
+        require(pos.status != ProtectionStatus.None, "E2E protection is missing");
+    }
+
+    function _assertClaim(uint256 rightId, uint256 protectionId, uint256 claimId) private view {
+        ClaimRecord memory c = p.claims.getClaim(claimId);
+        require(c.supplyRightId == rightId && c.protectionId == protectionId, "E2E claim belongs to another case");
+        require(c.claimant == w.buyer, "E2E claim was filed by another buyer");
+        require(c.claimedType == DefaultType.Partial, "E2E claim type differs");
+        require(c.claimedLoss == CLAIMED_LOSS && c.reportedDeliveredQuantity == DELIVERED, "E2E claim loss differs");
+        require(c.evidenceHash == _ref("EVIDENCE"), "E2E claim evidence differs");
+        if (c.status == ClaimStatus.Approved || c.status == ClaimStatus.Settled) {
+            require(c.verifier == w.verifier, "E2E claim was decided by another verifier");
+            require(
+                c.verifiedDeliveredQuantity == DELIVERED && c.approvedLoss == CLAIMED_LOSS,
+                "E2E verified loss differs"
+            );
+        }
+    }
 
     function _latestClaim(uint256 rightId) private view returns (uint256) {
         uint256[] memory ids = p.claims.claimsOfSupplyRight(rightId);

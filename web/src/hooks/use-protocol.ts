@@ -17,7 +17,7 @@ export const protocolKeys = {
   snapshot: (chainId: number) => ["protocol", "snapshot", chainId] as const,
   events: (chainId: number) => ["protocol", "events", chainId] as const,
   roles: (chainId: number, address?: string) => ["protocol", "roles", chainId, address] as const,
-  balances: (chainId: number, address?: string) => ["protocol", "balances", chainId, address] as const,
+  balances: (chainId: number, address?: string, vault?: string) => ["protocol", "balances", chainId, address, vault] as const,
 };
 
 export function useAppConfig() {
@@ -123,15 +123,15 @@ export function useBalances(address?: Address) {
   const { chainId, deployment, isLocal } = useActiveChain();
   const client = usePublicClient({ chainId });
   return useQuery({
-    queryKey: protocolKeys.balances(chainId, address),
-    enabled: !!client && !!deployment && !!address,
+    queryKey: protocolKeys.balances(chainId, address, deployment?.vault),
+    enabled: !!client && !!address,
     refetchInterval: isLocal ? 5_000 : 15_000,
     queryFn: async () => {
-      const d = deployment!;
-      const [eth, free, locked] = await Promise.all([
-        client!.getBalance({ address: address! }),
-        client!.readContract({ address: d.vault, abi: vaultAbi, functionName: "freeCollateral", args: [address!] }),
-        client!.readContract({ address: d.vault, abi: vaultAbi, functionName: "lockedCollateral", args: [address!] }),
+      const eth = await client!.getBalance({ address: address! });
+      if (!deployment) return { eth, free: 0n, locked: 0n };
+      const [free, locked] = await Promise.all([
+        client!.readContract({ address: deployment.vault, abi: vaultAbi, functionName: "freeCollateral", args: [address!] }),
+        client!.readContract({ address: deployment.vault, abi: vaultAbi, functionName: "lockedCollateral", args: [address!] }),
       ]);
       return { eth, free, locked };
     },

@@ -10,7 +10,8 @@
 # - Uses `cast wallet new <dir> <alias>`: cast asks for the keystore password in a hidden prompt.
 #   The password is never passed on the command line, stored, or echoed by this script.
 # - Never overwrites: an existing keystore with the same alias (or any other file in the
-#   keystore directory, e.g. the deployer keystore) is left untouched.
+#   keystore directory, e.g. the deployer keystore) is left untouched. Existing role
+#   keystores are unlocked interactively to verify that the config matches their keys.
 # - Only public addresses are written, to config/wallets.sepolia.json.
 #
 # Windows: run from Git Bash, or from PowerShell with
@@ -30,11 +31,14 @@ if ! "$CAST" --version >/dev/null 2>&1; then
 fi
 command -v node >/dev/null 2>&1 || { echo "error: node is required to update $CONFIG" >&2; exit 1; }
 
-# Keystores must live outside the repository so they can never be committed.
-case "$(cd "$(dirname "$KEYSTORE_DIR")" 2>/dev/null && pwd)/$(basename "$KEYSTORE_DIR")" in
-  "$ROOT"|"$ROOT"/*) echo "error: keystore directory must be outside the repository" >&2; exit 1 ;;
-esac
 mkdir -p "$KEYSTORE_DIR"
+# Resolve symlinks after creating the directory. This also rejects a path whose
+# parent resolves into the repository, even when it did not exist beforehand.
+ROOT_REAL="$(cd "$ROOT" && pwd -P)"
+KEYSTORE_REAL="$(cd "$KEYSTORE_DIR" && pwd -P)"
+case "${KEYSTORE_REAL,,}" in
+  "${ROOT_REAL,,}"|"${ROOT_REAL,,}"/*) echo "error: keystore directory must be outside the repository" >&2; exit 1 ;;
+esac
 
 echo "SupplyRight role wallets - Ethereum Sepolia (chain 11155111)"
 echo "cast:      $("$CAST" --version | head -n 1)"
@@ -58,8 +62,19 @@ for entry in $WALLETS; do
   alias="${entry%%:*}"
   role="${entry##*:}"
   if [ -e "$KEYSTORE_DIR/$alias" ] || [ -e "$KEYSTORE_DIR/$alias.json" ]; then
-    echo "[keep]   $alias already exists - not modified."
-    echo "         Check its address with: cast wallet address --account $alias"
+    keyfile="$KEYSTORE_DIR/$alias"
+    [ -e "$keyfile" ] || keyfile="$KEYSTORE_DIR/$alias.json"
+    echo "[verify] $alias already exists - not modified. Enter its password to check the public address."
+    address="$("$CAST" wallet address --keystore "$keyfile")"
+    case "$address" in 0x????????????????????????????????????????) ;; *) echo "error: could not read address for $alias" >&2; exit 1 ;; esac
+    # Do not silently remap a role: a deployed contract may already grant the old address.
+    configured="$(node -p "require(process.argv[1]).wallets.$role.address || ''" "$CONFIG")"
+    if [ -n "$configured" ] && [ "${configured,,}" != "${address,,}" ]; then
+      echo "error: $alias resolves to $address but config has $configured; reconcile before continuing" >&2
+      exit 1
+    fi
+    set_address "$role" "$address"
+    echo "         verified address $address"
     continue
   fi
   echo "[create] $alias - choose a strong password at the hidden prompt."
@@ -72,6 +87,7 @@ for entry in $WALLETS; do
       if (!r.success || !r.data?.[0]?.address) process.exit(1);
       process.stdout.write(r.data[0].address);
     });')"
+  case "$address" in 0x????????????????????????????????????????) ;; *) echo "error: cast returned no valid address for $alias" >&2; exit 1 ;; esac
   set_address "$role" "$address"
   echo "         address $address"
 done

@@ -4,8 +4,9 @@
 #
 # The fork has chain id 11155111 and the live Sepolia state, so scripts/run-sepolia-e2e.sh exercises exactly the
 # Sepolia code paths (config/wallets.sepolia.json addresses, address-selected signers, deployment files) with
-# impersonated accounts instead of keystores. Each role wallet gets only the ETH that scripts/prepare-funding.mjs
-# plans for it, which also proves the funding plan is sufficient.
+# impersonated accounts instead of keystores. Each role wallet gets the amount
+# scripts/prepare-funding.mjs plans using the FORK RPC's gas quote. This verifies
+# that fork-priced budget for the rehearsal, not the amount needed on live Sepolia.
 #
 # Everything a chain-11155111 broadcast writes (config contracts, contracts/deployments/11155111*,
 # contracts/broadcast/*/11155111, contracts/cache/*/11155111) is backed up first and restored afterwards, so the
@@ -21,20 +22,48 @@ FORK="http://127.0.0.1:$PORT"
 export PATH="$HOME/.foundry/bin:$PATH"
 cd "$ROOT"
 
+die() { echo "error: $*" >&2; exit 1; }
+# A rehearsal moves and removes whole 11155111 directories. Resolve both the
+# candidate and its allowed parent first, so symlinks cannot redirect either
+# operation outside the intended tree (also compare case-insensitively on Windows).
+assert_inside() {
+  local actual allowed
+  actual="$(cd "$1" && pwd -P)" || die "cannot resolve directory: $1"
+  allowed="$(cd "$2" && pwd -P)" || die "cannot resolve allowed root: $2"
+  case "${actual,,}" in
+    "${allowed,,}"/*) ;;
+    *) die "refusing directory operation outside $allowed: $actual" ;;
+  esac
+}
+
+assert_inside "contracts" "$ROOT"
+for kind in broadcast cache; do assert_inside "contracts/$kind" "contracts"; done
+
 BACKUP="$(mktemp -d)"
+BACKUP_REAL="$(cd "$BACKUP" && pwd -P)"
+assert_backup_root() {
+  local actual
+  actual="$(cd "$BACKUP" && pwd -P)" || die "backup directory disappeared: $BACKUP"
+  [ "${actual,,}" = "${BACKUP_REAL,,}" ] && [ "$actual" != / ] \
+    || die "refusing to remove a path other than the mktemp backup root: $actual"
+}
 cp config/wallets.sepolia.json "$BACKUP/"
 mkdir -p "$BACKUP/deployments"
 for f in contracts/deployments/11155111*; do [ -e "$f" ] && cp "$f" "$BACKUP/deployments/"; done
 for kind in broadcast cache; do
   for d in contracts/"$kind"/*/11155111; do
     [ -d "$d" ] || continue
+    assert_inside "$d" "contracts/$kind"
     name="$(basename "$(dirname "$d")")"
     mkdir -p "$BACKUP/$kind/$name"
+    assert_inside "$BACKUP/$kind/$name" "$BACKUP"
     mv "$d" "$BACKUP/$kind/$name/"
   done
 done
 
-anvil --fork-url "$UPSTREAM" --port "$PORT" --auto-impersonate --silent &
+assert_backup_root
+ANVIL_LOG="$BACKUP/anvil.log"
+RUST_LOG=error anvil --fork-url "$UPSTREAM" --port "$PORT" --auto-impersonate --silent >"$ANVIL_LOG" 2>&1 &
 ANVIL_PID=$!
 cleanup() {
   kill "$ANVIL_PID" 2>/dev/null || true
@@ -42,21 +71,34 @@ cleanup() {
   rm -f contracts/deployments/11155111*
   for f in "$BACKUP"/deployments/*; do [ -e "$f" ] && cp "$f" contracts/deployments/; done
   for kind in broadcast cache; do
-    rm -rf contracts/"$kind"/*/11155111
+    for d in contracts/"$kind"/*/11155111; do
+      [ -e "$d" ] || [ -L "$d" ] || continue
+      assert_inside "$d" "contracts/$kind"
+      rm -rf "$d"
+    done
     for d in "$BACKUP/$kind"/*/11155111; do
-      [ -d "$d" ] && mv "$d" "contracts/$kind/$(basename "$(dirname "$d")")/"
+      [ -d "$d" ] || continue
+      assert_inside "$d" "$BACKUP"
+      target="contracts/$kind/$(basename "$(dirname "$d")")"
+      assert_inside "$target" "contracts/$kind"
+      mv "$d" "$target/"
     done
   done
+  assert_backup_root
   rm -rf "$BACKUP"
   echo "rehearsal artifacts removed; original Sepolia files restored"
 }
 trap cleanup EXIT
 for _ in $(seq 1 100); do cast chain-id --rpc-url "$FORK" >/dev/null 2>&1 && break; sleep 0.3; done
-[ "$(cast chain-id --rpc-url "$FORK")" = "11155111" ] || { echo "fork did not start"; exit 1; }
+if [ "$(cast chain-id --rpc-url "$FORK" 2>/dev/null || true)" != "11155111" ]; then
+  echo "fork did not start; recent Anvil output:" >&2
+  tail -n 40 "$ANVIL_LOG" >&2 || true
+  exit 1
+fi
 
 PROFILE=config/gas-profile.sepolia-fork.json
 if [ -f "$PROFILE" ]; then
-  echo "==> funding the fork wallets with exactly the amounts scripts/prepare-funding.mjs plans"
+  echo "==> fork-priced funding plan (Anvil gas quote $(cast gas-price --rpc-url "$FORK") wei; not the live Sepolia funding amount)"
   plan="$(SEPOLIA_RPC_URL="$FORK" node scripts/prepare-funding.mjs --json)"
 else
   echo "==> no Glamsterdam gas profile yet: funding generously (0.5 ETH each) to measure it"
