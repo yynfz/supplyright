@@ -4,7 +4,7 @@
   "rpcEnvVar": "SEPOLIA_RPC_URL",
   "deployer": {
     "role": "deployer",
-    "address": "0x959a7CDa30042C26deAAE4Cf27Cc319dFE2CB5B8",
+    "address": "0xCf2661F9334416ef8D6be26ad520FFE0d2899dff",
     "description": "Initial contract deployer and default admin"
   },
   "wallets": {

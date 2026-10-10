@@ -6,7 +6,7 @@ This document details the test flow, multi-signer roles, resumption mechanisms, 
 
 The test flow utilizes four independent signers plus the deployer:
 
-1. **Deployer** (`0x959a7CDa30042C26deAAE4Cf27Cc319dFE2CB5B8`):
+1. **Deployer** (`0xCf2661F9334416ef8D6be26ad520FFE0d2899dff`):
    - Holds initial `DEFAULT_ADMIN_ROLE`.
    - Runs `script/SetupRoles.s.sol` to grant roles to the 4 role wallets.
 2. **Admin & Registrar** (`0x3a570002A98Bbe4cC7A182ccdbb5EF0dc2633CBc`):

@@ -3,7 +3,7 @@
  * scripts/prepare-funding.mjs
  *
  * Balance inspection, gas estimation, and funding preparation script for:
- * - Deployer: 0x959a7CDa30042C26deAAE4Cf27Cc319dFE2CB5B8
+ * - Deployer: 0xCf2661F9334416ef8D6be26ad520FFE0d2899dff
  * - 4 Wallets: buyer, provider, verifier, admin
  *
  * Uses built-in node fetch with standard JSON-RPC 2.0 (Zero external dependencies).

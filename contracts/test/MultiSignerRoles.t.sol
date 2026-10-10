@@ -42,7 +42,7 @@ contract MultiSignerRolesTest is Test {
     SupplyClaimManager internal claims;
     MockETH internal meth;
 
-    address internal deployer = 0x959a7CDa30042C26deAAE4Cf27Cc319dFE2CB5B8;
+    address internal deployer = 0xCf2661F9334416ef8D6be26ad520FFE0d2899dff;
     address internal buyer = 0x6ACF72e4047d26b1C0AA6292BD38B03E9a70580B;
     address internal provider = 0xDAB3737215e8BA6b4d18e47b422a52bCfE03e066;
     address internal verifier = 0x4481A845dFb7855dC1e0946C26965f4a856B12dD;

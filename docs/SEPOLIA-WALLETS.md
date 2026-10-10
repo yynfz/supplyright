@@ -6,7 +6,7 @@ This document describes the secure four-wallet architecture for SupplyRight on *
 
 | Role | Alias | Public Address | On-Chain Responsibility |
 | :--- | :--- | :--- | :--- |
-| **Deployer & Default Admin** | `deployer` | `0x959a7CDa30042C26deAAE4Cf27Cc319dFE2CB5B8` | Initial contract deployer and protocol administrator. |
+| **Deployer & Default Admin** | `deployer` | `0xCf2661F9334416ef8D6be26ad520FFE0d2899dff` | Initial contract deployer and protocol administrator. |
 | **Admin & Registrar** | `supplyright-admin` | `0x3a570002A98Bbe4cC7A182ccdbb5EF0dc2633CBc` | Validates off-chain PO documents, mints SupplyRight NFTs, assigns roles. |
 | **Buyer** | `supplyright-buyer` | `0x6ACF72e4047d26b1C0AA6292BD38B03E9a70580B` | Registers POs, owns SupplyRight NFTs, files default claims, receives payouts. |
 | **Protection Provider** | `supplyright-provider` | `0xDAB3737215e8BA6b4d18e47b422a52bCfE03e066` | Underwrites protection, deposits 0.010 Sepolia ETH collateral in escrow, receives Recovery Claim NFTs. |

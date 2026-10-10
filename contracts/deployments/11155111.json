@@ -1,0 +1,13 @@
+{
+  "chainId": 11155111,
+  "claimManager": "0xF62858B1735B60d64C37F366E644E96A7872FF23",
+  "deployedAt": 1791622981,
+  "deployer": "0xCf2661F9334416ef8D6be26ad520FFE0d2899dff",
+  "mockToken": true,
+  "protectionNFT": "0x2b37d212043A800902dd048c10939781f81EeE62",
+  "recoveryClaimNFT": "0x5e1E998D9c28a6bF4db9d1FE12F2DaF82EF43975",
+  "settlementToken": "0x5ebEB88c4e013B427a05463C5bAdd471D5F22F0C",
+  "startBlock": 11883278,
+  "supplyRightNFT": "0x10e3798C2E9DE442E0F49D47A10e1Fa96f6520dE",
+  "vault": "0xA8a263D5A5901D94301E657AabE0cAe44CbA1b31"
+}

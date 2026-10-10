@@ -1,7 +1,7 @@
 # Foundry
 contracts/out/
 contracts/cache/
-contracts/broadcast/*/31337/
+contracts/broadcast/
 contracts/deployments/31337*.json
 
 # Node / Next.js
@@ -17,6 +17,7 @@ npm-debug.log*
 .env.local
 .env.*.local
 contracts/.env
+contracts/*deployer*.json
 
 # Local data
 web/prisma/*.db
