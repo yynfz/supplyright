@@ -169,10 +169,10 @@ contract SupplyRightNFTTest is SupplyRightFixture {
         (uint256 id, uint256 pid) = _setupProtected();
         _passDeadline();
         uint256 c1 = _submitPartial(pid, DELIVERED, SHORTFALL_LOSS);
-        _approve(c1, DELIVERED, 30 * METH);
+        _approve(c1, DELIVERED, 30 * ETH);
         claims.settleClaim(c1);
         // Second claim rejected -> appeal window open -> closure blocked.
-        uint256 c2 = _submitPartial(pid, DELIVERED, 10 * METH);
+        uint256 c2 = _submitPartial(pid, DELIVERED, 10 * ETH);
         vm.prank(verifier);
         claims.rejectClaim(c2, keccak256("reason"), "Insufficient evidence");
         vm.expectRevert(SupplyRightNFT.ClaimActivityPending.selector);

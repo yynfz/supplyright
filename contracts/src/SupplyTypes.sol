@@ -61,7 +61,7 @@ enum RecoveryStatus {
     WrittenOff
 }
 
-/// @dev Monetary values are denominated in the settlement token's smallest unit (18 decimals for mETH).
+/// @dev Monetary values are denominated in wei (native ETH, 18 decimals).
 ///      Quantities are stored with 3 implied decimals (e.g. 50 MT = 50_000).
 struct SupplyRightData {
     address buyer;

@@ -2,7 +2,6 @@
 pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {MockETH} from "../src/MockETH.sol";
 import {SupplyRightNFT} from "../src/SupplyRightNFT.sol";
 import {ProtectionNFT} from "../src/ProtectionNFT.sol";
 import {RecoveryClaimNFT} from "../src/RecoveryClaimNFT.sol";
@@ -17,9 +16,8 @@ import {
 import {DefaultType} from "../src/SupplyTypes.sol";
 
 /// @notice Deploys and wires the full protocol with the fictional demo case-study parameters:
-///         50 MT ordered for 100 mETH, 20 mETH coverage at 20% of verified loss.
+///         50 MT ordered for 100 ETH, 20 ETH coverage at 20% of verified loss (native ETH, wei units).
 abstract contract SupplyRightFixture is Test {
-    MockETH internal meth;
     SupplyRightNFT internal rights;
     ProtectionNFT internal protection;
     RecoveryClaimNFT internal recovery;
@@ -34,15 +32,15 @@ abstract contract SupplyRightFixture is Test {
     address internal verifier;
     uint256 internal verifierPk;
 
-    uint256 internal constant METH = 1 ether;
+    uint256 internal constant ETH = 1 ether;
     uint256 internal constant MT = 1e3;
-    uint256 internal constant CONTRACT_VALUE = 100 * METH;
+    uint256 internal constant CONTRACT_VALUE = 100 * ETH;
     uint256 internal constant ORDERED = 50 * MT;
     uint256 internal constant DELIVERED = 10 * MT;
-    uint256 internal constant COVERAGE = 20 * METH;
+    uint256 internal constant COVERAGE = 20 * ETH;
     uint16 internal constant COVERAGE_BPS = 2_000;
-    uint256 internal constant SHORTFALL_LOSS = 80 * METH; // 40 MT undelivered x 2 mETH per MT
-    uint256 internal constant EXPECTED_PAYOUT = 16 * METH;
+    uint256 internal constant SHORTFALL_LOSS = 80 * ETH; // 40 MT undelivered x 2 ETH per MT
+    uint256 internal constant EXPECTED_PAYOUT = 16 * ETH;
 
     uint64 internal deadline;
     uint64 internal protectionExpiry;
@@ -53,13 +51,10 @@ abstract contract SupplyRightFixture is Test {
         vm.warp(1_750_000_000);
         (verifier, verifierPk) = makeAddrAndKey("verifier");
 
-        meth = new MockETH();
         rights = new SupplyRightNFT(admin);
         protection = new ProtectionNFT(admin);
         recovery = new RecoveryClaimNFT(admin);
-        vault = new SupplyProtectionVault(
-            admin, meth, ISupplyRightNFT(address(rights)), IProtectionNFT(address(protection))
-        );
+        vault = new SupplyProtectionVault(admin, ISupplyRightNFT(address(rights)), IProtectionNFT(address(protection)));
         claims = new SupplyClaimManager(
             admin,
             ISupplyRightNFT(address(rights)),
@@ -82,10 +77,7 @@ abstract contract SupplyRightFixture is Test {
         claims.grantRole(claims.VERIFIER_ROLE(), verifier);
         vm.stopPrank();
 
-        vm.startPrank(provider);
-        meth.faucet(1_000 * METH);
-        meth.approve(address(vault), type(uint256).max);
-        vm.stopPrank();
+        vm.deal(provider, 1_000 * ETH);
 
         deadline = uint64(block.timestamp + 30 days);
         protectionExpiry = deadline + 60 days;
@@ -131,7 +123,7 @@ abstract contract SupplyRightFixture is Test {
     function _protect(uint256 rightId) internal returns (uint256 protectionId) {
         uint256 requestId = _request(rightId);
         vm.prank(provider);
-        protectionId = vault.fundAndApproveProtection(requestId, keccak256("underwriting-memo"));
+        protectionId = vault.fundAndApproveProtection{value: COVERAGE}(requestId, keccak256("underwriting-memo"));
     }
 
     function _setupProtected() internal returns (uint256 rightId, uint256 protectionId) {
@@ -158,7 +150,7 @@ abstract contract SupplyRightFixture is Test {
         claims.approveClaim(claimId, delivered, loss, keccak256(abi.encode("verifier-report", claimId)));
     }
 
-    /// @dev Full demo path up to an approved 80 mETH loss claim (payout quote 16 mETH).
+    /// @dev Full demo path up to an approved 80 ETH loss claim (payout quote 16 ETH).
     function _approvedDemoClaim() internal returns (uint256 rightId, uint256 protectionId, uint256 claimId) {
         (rightId, protectionId) = _setupProtected();
         _passDeadline();

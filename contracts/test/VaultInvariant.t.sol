@@ -3,7 +3,6 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {SupplyRightFixture} from "./Fixture.t.sol";
-import {MockETH} from "../src/MockETH.sol";
 import {SupplyRightNFT} from "../src/SupplyRightNFT.sol";
 import {SupplyProtectionVault} from "../src/SupplyProtectionVault.sol";
 import {SupplyClaimManager} from "../src/SupplyClaimManager.sol";
@@ -12,7 +11,6 @@ import {ProtectionPosition, DefaultType, SupplyStatus} from "../src/SupplyTypes.
 /// @notice Drives random sequences of deposits, withdrawals, protections, claims, settlements and
 ///         releases against the real contracts.
 contract VaultHandler is Test {
-    MockETH internal meth;
     SupplyRightNFT internal rights;
     SupplyProtectionVault internal vault;
     SupplyClaimManager internal claims;
@@ -26,7 +24,6 @@ contract VaultHandler is Test {
     uint256 internal nonce;
 
     constructor(
-        MockETH meth_,
         SupplyRightNFT rights_,
         SupplyProtectionVault vault_,
         SupplyClaimManager claims_,
@@ -35,7 +32,6 @@ contract VaultHandler is Test {
         address provider_,
         address verifier_
     ) {
-        meth = meth_;
         rights = rights_;
         vault = vault_;
         claims = claims_;
@@ -52,7 +48,7 @@ contract VaultHandler is Test {
     function deposit(uint256 amount) external {
         amount = bound(amount, 1, 100 ether);
         vm.prank(provider);
-        vault.deposit(amount);
+        vault.deposit{value: amount}();
     }
 
     function withdraw(uint256 amount) external {
@@ -86,8 +82,10 @@ contract VaultHandler is Test {
         rights.activate(id, keccak256("ack"));
         vm.prank(buyer);
         uint256 req = vault.requestProtection(id, provider, coverage, bps, deadline + 30 days, keccak256("terms"));
+        uint256 free = vault.freeCollateral(provider);
         vm.prank(provider);
-        uint256 pid = vault.fundAndApproveProtection(req, keccak256("memo"));
+        uint256 pid =
+            vault.fundAndApproveProtection{value: coverage > free ? coverage - free : 0}(req, keccak256("memo"));
         protectionIds.push(pid);
     }
 
@@ -118,9 +116,9 @@ contract VaultHandler is Test {
         }
         vm.prank(verifier);
         claims.approveClaim(claimId, delivered, loss, keccak256(abi.encode("inv-rep", nonce)));
-        uint256 before = meth.balanceOf(buyer);
+        uint256 before = buyer.balance;
         claims.settleClaim(claimId);
-        ghostPaidToBuyer += meth.balanceOf(buyer) - before;
+        ghostPaidToBuyer += buyer.balance - before;
     }
 
     function expireAndRelease(uint256 seed) external {
@@ -140,15 +138,14 @@ contract VaultInvariantTest is SupplyRightFixture {
 
     function setUp() public override {
         super.setUp();
-        handler = new VaultHandler(meth, rights, vault, claims, registrar, buyer, provider, verifier);
-        vm.prank(provider);
-        meth.faucet(1_000 ether); // fixture already minted 1,000; top up for long runs
+        handler = new VaultHandler(rights, vault, claims, registrar, buyer, provider, verifier);
+        vm.deal(provider, 1_000_000 ether); // enough native ETH for long runs
         targetContract(address(handler));
     }
 
     /// Vault always holds at least the free + locked collateral it accounts for.
     function invariant_VaultIsSolvent() public view {
-        assertGe(meth.balanceOf(address(vault)), vault.totalFreeCollateral() + vault.totalLockedCollateral());
+        assertGe(address(vault).balance, vault.totalFreeCollateral() + vault.totalLockedCollateral());
     }
 
     /// Every payout reached the beneficiary, and accounting matches.

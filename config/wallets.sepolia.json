@@ -2,43 +2,55 @@
   "network": "sepolia",
   "chainId": 11155111,
   "rpcEnvVar": "SEPOLIA_RPC_URL",
+  "explorer": "https://sepolia.etherscan.io",
+  "settlementAsset": "native ETH",
   "deployer": {
     "role": "deployer",
     "address": "0x959a7CDa30042C26deAAE4Cf27Cc319dFE2CB5B8",
-    "description": "Initial contract deployer and default admin"
+    "keystoreAlias": "supplyright-sepolia-deployer.json",
+    "description": "Existing deployer; receives DEFAULT_ADMIN_ROLE at deployment and grants the role wallets"
   },
   "wallets": {
+    "admin": {
+      "role": "Registrar / Admin",
+      "address": "0x5b0D0561fa0FFeA6a45cAC5B95d593C3CCcA17C6",
+      "keystoreAlias": "supplyright-admin",
+      "onchainRoles": [
+        "SupplyRightNFT: DEFAULT_ADMIN_ROLE, REGISTRAR_ROLE, TRANSFER_APPROVER_ROLE",
+        "RecoveryClaimNFT: DEFAULT_ADMIN_ROLE, TRANSFER_APPROVER_ROLE",
+        "ProtectionNFT, SupplyProtectionVault, SupplyClaimManager: DEFAULT_ADMIN_ROLE"
+      ],
+      "description": "Validates PO documents, mints/activates supply rights, manages roles and bounded settings"
+    },
     "buyer": {
-      "role": "supplyright-buyer",
-      "address": "0x6ACF72e4047d26b1C0AA6292BD38B03E9a70580B",
+      "role": "Buyer / Manufacturer",
+      "address": "0x8b6Dd69Ea85C80dd545408e6eD35157aaC70838a",
       "keystoreAlias": "supplyright-buyer",
-      "keystorePath": "~/.foundry/keystores/supplyright-buyer",
-      "description": "Registers POs, holds SupplyRight NFTs, files claims, receives payout settlements"
+      "onchainRoles": [
+        "SupplyRightNFT: BUYER_ROLE"
+      ],
+      "description": "Owns SupplyRight NFTs, requests protection, files claims, receives ETH settlement"
     },
     "provider": {
-      "role": "supplyright-provider",
-      "address": "0xDAB3737215e8BA6b4d18e47b422a52bCfE03e066",
+      "role": "Protection Provider",
+      "address": "0x1Abf1953e7176D4265eC7887A8B34C149d091d15",
       "keystoreAlias": "supplyright-provider",
-      "keystorePath": "~/.foundry/keystores/supplyright-provider",
-      "description": "Underwrites protection, deposits escrow collateral, receives Recovery Claim NFTs upon settlement"
+      "onchainRoles": [
+        "SupplyProtectionVault: PROVIDER_ROLE"
+      ],
+      "description": "Funds protection with ETH escrow in the vault, receives Recovery Claim NFTs"
     },
     "verifier": {
-      "role": "supplyright-verifier",
-      "address": "0x4481A845dFb7855dC1e0946C26965f4a856B12dD",
+      "role": "Independent Verifier",
+      "address": "0xfF84e00835e2902C5d2336459da69BB70E81d9C8",
       "keystoreAlias": "supplyright-verifier",
-      "keystorePath": "~/.foundry/keystores/supplyright-verifier",
-      "description": "Independent verifier: assesses delivery shortfalls and approves/rejects claims"
-    },
-    "admin": {
-      "role": "supplyright-admin",
-      "address": "0x3a570002A98Bbe4cC7A182ccdbb5EF0dc2633CBc",
-      "keystoreAlias": "supplyright-admin",
-      "keystorePath": "~/.foundry/keystores/supplyright-admin",
-      "description": "Protocol admin & registrar: validates documents, mints supply rights, manages roles"
+      "onchainRoles": [
+        "SupplyClaimManager: VERIFIER_ROLE"
+      ],
+      "description": "Verifies supplier failure; approves or rejects claims"
     }
   },
   "contracts": {
-    "settlementToken": null,
     "supplyRightNFT": null,
     "protectionNFT": null,
     "recoveryClaimNFT": null,
@@ -46,4 +58,3 @@
     "claimManager": null
   }
 }
-

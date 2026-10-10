@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {SupplyRightFixture} from "./Fixture.t.sol";
+import {EtherRejecter} from "./utils/EtherRejecter.sol";
 import {SupplyProtectionVault} from "../src/SupplyProtectionVault.sol";
 import {ProtectionNFT} from "../src/ProtectionNFT.sol";
 import {
@@ -28,7 +29,7 @@ contract SupplyProtectionVaultTest is SupplyRightFixture {
         assertEq(uint8(p.status), uint8(ProtectionStatus.Active));
         assertEq(vault.lockedCollateral(provider), COVERAGE);
         assertEq(vault.freeCollateral(provider), 0);
-        assertEq(meth.balanceOf(address(vault)), COVERAGE);
+        assertEq(address(vault).balance, COVERAGE);
 
         assertEq(protection.ownerOf(pid), buyer);
         ProtectionTerms memory t = protection.getTerms(pid);
@@ -45,7 +46,7 @@ contract SupplyProtectionVaultTest is SupplyRightFixture {
 
         // Provider has deposited less than the requested coverage.
         vm.prank(provider);
-        vault.deposit(COVERAGE - 1);
+        vault.deposit{value: COVERAGE - 1}();
         vm.expectRevert(
             abi.encodeWithSelector(SupplyProtectionVault.InsufficientFreeCollateral.selector, COVERAGE - 1, COVERAGE)
         );
@@ -61,10 +62,10 @@ contract SupplyProtectionVaultTest is SupplyRightFixture {
         uint256 rightId = _mintActiveRight();
         uint256 requestId = _request(rightId);
         vm.startPrank(provider);
-        vault.deposit(50 * METH);
+        vault.deposit{value: 50 * ETH}();
         uint256 pid = vault.approveProtection(requestId, keccak256("memo"));
         vm.stopPrank();
-        assertEq(vault.freeCollateral(provider), 30 * METH);
+        assertEq(vault.freeCollateral(provider), 30 * ETH);
         assertEq(vault.lockedCollateral(provider), COVERAGE);
         assertEq(vault.getProtection(pid).lockedAmount, COVERAGE);
     }
@@ -180,14 +181,14 @@ contract SupplyProtectionVaultTest is SupplyRightFixture {
         assertEq(uint8(p.status), uint8(ProtectionStatus.Released));
         assertEq(p.lockedAmount, 0);
         assertEq(p.releasedAmount, COVERAGE - EXPECTED_PAYOUT);
-        assertEq(vault.freeCollateral(provider), 4 * METH);
+        assertEq(vault.freeCollateral(provider), 4 * ETH);
         assertEq(uint8(protection.getTerms(pid).claimStatus), uint8(ProtectionClaimStatus.Released));
 
-        uint256 before = meth.balanceOf(provider);
+        uint256 before = provider.balance;
         vm.prank(provider);
-        vault.withdraw(4 * METH);
-        assertEq(meth.balanceOf(provider), before + 4 * METH);
-        assertEq(meth.balanceOf(address(vault)), 0);
+        vault.withdraw(4 * ETH);
+        assertEq(provider.balance, before + 4 * ETH);
+        assertEq(address(vault).balance, 0);
 
         vm.expectRevert(abi.encodeWithSelector(SupplyProtectionVault.ProtectionNotActive.selector, ProtectionStatus.Released));
         vault.releaseCollateral(pid);
@@ -200,14 +201,53 @@ contract SupplyProtectionVaultTest is SupplyRightFixture {
         assertEq(vault.freeCollateral(provider), COVERAGE);
     }
 
+    function test_FundAndApproveCreditsExcessEthAsFreeCollateral() public {
+        uint256 requestId = _request(_mintActiveRight());
+        vm.prank(provider);
+        vault.fundAndApproveProtection{value: COVERAGE + 1 ether}(requestId, keccak256("memo"));
+        assertEq(vault.lockedCollateral(provider), COVERAGE);
+        assertEq(vault.freeCollateral(provider), 1 ether);
+        assertEq(address(vault).balance, COVERAGE + 1 ether);
+    }
+
+    function test_FundAndApproveUsesFreeCollateralFirst() public {
+        vm.prank(provider);
+        vault.deposit{value: 5 ether}();
+        uint256 requestId = _request(_mintActiveRight());
+        vm.prank(provider);
+        vault.fundAndApproveProtection{value: COVERAGE - 5 ether}(requestId, keccak256("memo"));
+        assertEq(vault.freeCollateral(provider), 0);
+        assertEq(vault.lockedCollateral(provider), COVERAGE);
+        assertEq(address(vault).balance, COVERAGE);
+    }
+
+    function test_RevertWhen_PlainEthSentToVault() public {
+        vm.prank(provider);
+        (bool ok,) = address(vault).call{value: 1 ether}("");
+        assertFalse(ok, "no receive/fallback: unattributed ETH is refused");
+        assertEq(address(vault).balance, 0);
+    }
+
+    function test_FailedEthWithdrawalKeepsAccounting() public {
+        vm.prank(provider);
+        vault.deposit{value: 1 ether}();
+        vm.etch(provider, address(new EtherRejecter()).code);
+        vm.expectRevert(EtherRejecter.Rejected.selector);
+        vm.prank(provider);
+        vault.withdraw(1 ether);
+        assertEq(vault.freeCollateral(provider), 1 ether);
+        assertEq(vault.totalFreeCollateral(), 1 ether);
+        assertEq(address(vault).balance, 1 ether);
+    }
+
     function test_WithdrawStillPossibleAfterRoleRevoked() public {
         vm.prank(provider);
-        vault.deposit(1 * METH);
+        vault.deposit{value: 1 * ETH}();
         bytes32 role = vault.PROVIDER_ROLE();
         vm.prank(admin);
         vault.revokeRole(role, provider);
         vm.prank(provider);
-        vault.withdraw(1 * METH);
+        vault.withdraw(1 * ETH);
         assertEq(vault.freeCollateral(provider), 0);
     }
 
@@ -250,7 +290,7 @@ contract SupplyProtectionVaultTest is SupplyRightFixture {
         uint256 requestId =
             vault.requestProtection(rightId, provider, COVERAGE, bps, protectionExpiry, keccak256("terms"));
         vm.prank(provider);
-        uint256 pid = vault.fundAndApproveProtection(requestId, keccak256("memo"));
+        uint256 pid = vault.fundAndApproveProtection{value: COVERAGE}(requestId, keccak256("memo"));
         uint256 quote = vault.quotePayout(pid, loss);
         assertLe(quote, COVERAGE);
         assertLe(quote, (loss * bps) / 10_000);

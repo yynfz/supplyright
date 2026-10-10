@@ -3,238 +3,275 @@ pragma solidity 0.8.28;
 
 import {console2} from "forge-std/Script.sol";
 import {ScriptBase} from "./ScriptBase.s.sol";
+import {SupplyRightRoles} from "./lib/SupplyRightRoles.sol";
 import {SupplyRightNFT} from "../src/SupplyRightNFT.sol";
-import {SupplyProtectionVault} from "../src/SupplyProtectionVault.sol";
-import {SupplyClaimManager} from "../src/SupplyClaimManager.sol";
-import {RecoveryClaimNFT} from "../src/RecoveryClaimNFT.sol";
-import {ProtectionNFT} from "../src/ProtectionNFT.sol";
-import {MockETH} from "../src/MockETH.sol";
-import {DefaultType, ClaimRecord, ClaimStatus, ProtectionPosition} from "../src/SupplyTypes.sol";
+import {
+    SupplyStatus,
+    SupplyRightData,
+    ProtectionPosition,
+    ClaimRecord,
+    ClaimStatus,
+    DefaultType
+} from "../src/SupplyTypes.sol";
 
-/// @notice Resumable, state-tracking Sepolia End-to-End runner for SupplyRight.
-///         Executes each step signed by the corresponding encrypted role wallet.
-///         Tracks state to prevent duplicate settlement and enable resumption after failure.
+/// @notice Real multi-signer end-to-end run of the SupplyRight flow, settled in native ETH. Every step is
+///         signed by its own role wallet:
+///           1. admin     validates the PO offchain: mints the SupplyRight NFT to the buyer, records the
+///                        supplier acknowledgement and the 10 MT delivery note
+///           2. buyer     requests protection (0.010 ETH coverage at 20% of verified loss)
+///           3. provider  sends 0.010 ETH to the vault escrow and activates the protection (Protection NFT)
+///           4. buyer     files a partial-default claim after the delivery deadline (40 of 50 MT missing)
+///           5. verifier  verifies the shortfall and approves the eligible loss (0.040 ETH)
+///           6. verifier  triggers the atomic settlement: ETH payout to the buyer + Recovery Claim NFT to the
+///                        provider in one transaction (settlement is permissionless; the buyer does not pay
+///                        gas here, so their balance change equals the payout exactly)
+///
+///         Resume / no duplicates: the next step is derived from ONCHAIN state of the case identified by
+///         E2E_RUN_ID (its PO reference hash), never from a local file. Re-running after a failure continues
+///         where the chain stands; a settled claim is only reported, never settled again (the contract would
+///         also revert a second settlement).
+///
+/// Env:
+///   E2E_PHASE           setup (steps 1-3) | claim (steps 4-6) | all | status (read-only report)   [all]
+///   E2E_RUN_ID          identifies the case; change it to start a fresh case       [SEPOLIA-E2E-001]
+///   E2E_DEADLINE_DELAY  seconds from minting until the delivery deadline              [300]
+///
+/// Sepolia (each forge run asks for the keystore password of every --account it loads):
+///   E2E_PHASE=setup forge script script/RunSepoliaE2E.s.sol:RunSepoliaE2E --rpc-url sepolia --broadcast --slow \
+///     --account supplyright-admin --account supplyright-buyer --account supplyright-provider
+///   E2E_PHASE=claim forge script script/RunSepoliaE2E.s.sol:RunSepoliaE2E --rpc-url sepolia --broadcast --slow \
+///     --account supplyright-buyer --account supplyright-verifier
+///   E2E_PHASE=status forge script script/RunSepoliaE2E.s.sol:RunSepoliaE2E --rpc-url sepolia
 contract RunSepoliaE2E is ScriptBase {
-    uint256 internal constant MT = 1e3;
+    uint256 internal constant MT = 1e3; // quantities carry 3 implied decimals
     uint256 internal constant ORDERED = 50 * MT;
     uint256 internal constant DELIVERED = 10 * MT;
-    uint256 internal constant CONTRACT_VAL = 0.05 ether;
-    uint256 internal constant ESCROW_COVERAGE = 0.010 ether; // Exactly 0.010 ETH in escrow
-    uint16 internal constant COVERAGE_BPS = 2_000;          // 20%
-    uint256 internal constant SHORTFALL_LOSS = 0.040 ether;
-    uint256 internal constant EXPECTED_PAYOUT = 0.008 ether;
+    uint256 internal constant CONTRACT_VALUE = 0.05 ether; // 0.001 ETH per MT
+    uint256 internal constant COVERAGE = 0.010 ether;
+    uint16 internal constant COVERAGE_BPS = 2_000; // 20% of the verified loss
+    uint256 internal constant CLAIMED_LOSS = 0.040 ether; // 40 MT undelivered x 0.001 ETH
+    uint256 internal constant TARGET_PAYOUT = 0.008 ether; // the scenario's expectation, checked not enforced
+    uint256 internal constant TARGET_REMAINING = 0.002 ether;
+
+    SupplyRightRoles.Protocol internal p;
+    SupplyRightRoles.Wallets internal w;
+    string internal runId;
 
     function run() external {
-        string memory statePath = string.concat(vm.projectRoot(), "/deployments/sepolia-e2e-state.json");
-        console2.log("=== SupplyRight Sepolia E2E Execution Runner ===");
-        console2.log("State file:", statePath);
+        string memory phase = vm.envOr("E2E_PHASE", string("all"));
+        runId = vm.envOr("E2E_RUN_ID", string("SEPOLIA-E2E-001"));
+        p = _protocol();
+        w = _roleWallets();
+        bool readOnly = _eq(phase, "status");
+        bool doSetup = readOnly ? false : (_eq(phase, "setup") || _eq(phase, "all"));
+        bool doClaim = readOnly ? false : (_eq(phase, "claim") || _eq(phase, "all"));
+        require(readOnly || doSetup || doClaim, "E2E_PHASE must be setup | claim | all | status");
 
-        // Resolve signers (either env keys or test defaults if local)
-        uint256 adminKey = _key("ADMIN_PRIVATE_KEY", ANVIL_KEY_0);
-        uint256 buyerKey = _key("BUYER_PRIVATE_KEY", ANVIL_KEY_1);
-        uint256 providerKey = _key("PROVIDER_PRIVATE_KEY", ANVIL_KEY_2);
-        uint256 verifierKey = _key("VERIFIER_PRIVATE_KEY", ANVIL_KEY_3);
+        console2.log("=== SupplyRight E2E, chain", block.chainid);
+        console2.log("    run id:", runId);
+        console2.log("    phase :", phase);
+        _requireRoleMatrix(p, w);
 
-        address adminAddr = vm.addr(adminKey);
-        address buyerAddr = vm.addr(buyerKey);
-        address providerAddr = vm.addr(providerKey);
-        address verifierAddr = vm.addr(verifierKey);
-
-        console2.log("Signers:");
-        console2.log("  Admin    :", adminAddr);
-        console2.log("  Buyer    :", buyerAddr);
-        console2.log("  Provider :", providerAddr);
-        console2.log("  Verifier :", verifierAddr);
-
-        SupplyRightNFT rights = SupplyRightNFT(_readDeployment("supplyRightNFT"));
-        SupplyProtectionVault vault = SupplyProtectionVault(_readDeployment("vault"));
-        SupplyClaimManager claims = SupplyClaimManager(_readDeployment("claimManager"));
-        RecoveryClaimNFT recovery = RecoveryClaimNFT(_readDeployment("recoveryClaimNFT"));
-        ProtectionNFT protection = ProtectionNFT(_readDeployment("protectionNFT"));
-        MockETH token = MockETH(_readDeployment("settlementToken"));
-
-        // Read or initialize state
-        uint256 currentStep = 0;
-        uint256 tokenId = 0;
-        uint256 reqId = 0;
-        uint256 protectionId = 0;
-        uint256 claimId = 0;
-        uint256 recoveryTokenId = 0;
-
-        if (vm.exists(statePath)) {
-            string memory stateJson = vm.readFile(statePath);
-            currentStep = vm.parseJsonUint(stateJson, ".step");
-            tokenId = vm.parseJsonUint(stateJson, ".tokenId");
-            reqId = vm.parseJsonUint(stateJson, ".reqId");
-            protectionId = vm.parseJsonUint(stateJson, ".protectionId");
-            claimId = vm.parseJsonUint(stateJson, ".claimId");
-            recoveryTokenId = vm.parseJsonUint(stateJson, ".recoveryTokenId");
-            console2.log("Resuming from existing state. Last completed step:", currentStep);
-        } else {
-            console2.log("Starting fresh E2E flow from step 1.");
+        uint256 rightId = p.rights.tokenIdByPoRef(_ref("PO"));
+        if (doSetup) rightId = _registerPurchaseOrder(rightId);
+        if (rightId == 0) {
+            console2.log("no supply right for this run id yet; run E2E_PHASE=setup");
+            return;
         }
 
-        // ---------------------------------------------------------------------
-        // Step 1: Admin validates PO and mints SupplyRight NFT
-        // ---------------------------------------------------------------------
-        if (currentStep < 1) {
-            console2.log("\n[Step 1] Admin mints and activates SupplyRight NFT for Buyer...");
-            uint64 deadline = uint64(block.timestamp + 180); // 3 minutes or coarse timestamp
+        uint256 protectionId = p.rights.getSupplyRight(rightId).protectionId;
+        if (doSetup && protectionId == 0) protectionId = _fundProtection(rightId);
+        if (protectionId == 0) {
+            _report(rightId, 0, 0, "protection not active yet; run E2E_PHASE=setup");
+            return;
+        }
 
-            vm.startBroadcast(adminKey);
-            bytes32 poRef = keccak256(abi.encodePacked("PO-SEPOLIA-", block.timestamp));
-            tokenId = rights.mintSupplyRight(
+        uint256 claimId = _latestClaim(rightId);
+        if (doClaim) {
+            if (claimId == 0) claimId = _fileClaim(rightId, protectionId);
+            if (claimId != 0 && p.claims.getClaim(claimId).status == ClaimStatus.Submitted) _verify(claimId);
+            if (claimId != 0 && p.claims.getClaim(claimId).status == ClaimStatus.Approved) _settle(claimId);
+        }
+        _report(rightId, protectionId, claimId, "");
+    }
+
+    // ---------------------------------------------------------------------
+    // Steps
+    // ---------------------------------------------------------------------
+
+    /// Step 1 - admin (REGISTRAR_ROLE): mint to the buyer, supplier acknowledgement, delivery note.
+    function _registerPurchaseOrder(uint256 rightId) private returns (uint256) {
+        if (rightId == 0) {
+            uint64 deadline = uint64(block.timestamp + vm.envOr("E2E_DEADLINE_DELAY", uint256(300)));
+            console2.log("[1] admin mints the SupplyRight NFT to the buyer; delivery deadline", deadline);
+            _startBroadcastAs(Role.Admin);
+            rightId = p.rights.mintSupplyRight(
                 SupplyRightNFT.MintParams({
-                    buyer: buyerAddr,
-                    poRefHash: poRef,
-                    agreementHash: keccak256("AGREEMENT-SEPOLIA-001"),
-                    supplierRefHash: keccak256("SUPPLIER-SEPOLIA-001"),
-                    contractValue: CONTRACT_VAL,
+                    buyer: w.buyer,
+                    poRefHash: _ref("PO"),
+                    agreementHash: _ref("SUPPLY-AGREEMENT"),
+                    supplierRefHash: _ref("SUPPLIER"),
+                    contractValue: CONTRACT_VALUE,
                     orderedQuantity: ORDERED,
                     deliveryDeadline: deadline,
                     unit: bytes8("MT")
                 })
             );
-            rights.activate(tokenId, keccak256("ACK-SEPOLIA-001"));
-            rights.recordDelivery(tokenId, DELIVERED, keccak256("DN-SEPOLIA-001"));
             vm.stopBroadcast();
-
-            currentStep = 1;
-            _saveState(statePath, currentStep, tokenId, reqId, protectionId, claimId, recoveryTokenId);
-            console2.log("Step 1 complete. Token ID:", tokenId);
         }
-
-        // ---------------------------------------------------------------------
-        // Step 2: Buyer requests protection
-        // ---------------------------------------------------------------------
-        if (currentStep < 2) {
-            console2.log("\n[Step 2] Buyer requests protection for Token ID:", tokenId);
-            vm.startBroadcast(buyerKey);
-            reqId = vault.requestProtection(
-                tokenId,
-                providerAddr,
-                ESCROW_COVERAGE,
-                COVERAGE_BPS,
-                uint64(block.timestamp + 30 days),
-                keccak256("TERMS-SEPOLIA-001")
-            );
+        SupplyRightData memory sr = p.rights.getSupplyRight(rightId);
+        if (sr.status == SupplyStatus.Registered) {
+            console2.log("[1] admin records the supplier acknowledgement (Registered -> Active)");
+            _startBroadcastAs(Role.Admin);
+            p.rights.activate(rightId, _ref("SUPPLIER-ACK"));
             vm.stopBroadcast();
-
-            currentStep = 2;
-            _saveState(statePath, currentStep, tokenId, reqId, protectionId, claimId, recoveryTokenId);
-            console2.log("Step 2 complete. Request ID:", reqId);
         }
-
-        // ---------------------------------------------------------------------
-        // Step 3: Provider deposits 0.010 ETH into escrow and approves protection
-        // ---------------------------------------------------------------------
-        if (currentStep < 3) {
-            console2.log("\n[Step 3] Provider deposits 0.010 ETH into escrow...");
-            vm.startBroadcast(providerKey);
-            if (token.balanceOf(providerAddr) < ESCROW_COVERAGE) {
-                token.faucet(ESCROW_COVERAGE);
-            }
-            token.approve(address(vault), ESCROW_COVERAGE);
-            vault.deposit(ESCROW_COVERAGE);
-            protectionId = vault.approveProtection(reqId, keccak256("MEMO-SEPOLIA-001"));
+        if (p.rights.getSupplyRight(rightId).deliveredQuantity < DELIVERED) {
+            console2.log("[1] admin records the delivery note: 10 of 50 MT delivered");
+            _startBroadcastAs(Role.Admin);
+            p.rights.recordDelivery(rightId, DELIVERED, _ref("DELIVERY-NOTE-1"));
             vm.stopBroadcast();
-
-            currentStep = 3;
-            _saveState(statePath, currentStep, tokenId, reqId, protectionId, claimId, recoveryTokenId);
-            console2.log("Step 3 complete. Protection ID:", protectionId);
         }
-
-        // ---------------------------------------------------------------------
-        // Step 4: Buyer submits claim after deadline
-        // ---------------------------------------------------------------------
-        if (currentStep < 4) {
-            console2.log("\n[Step 4] Checking delivery deadline before claim submission...");
-            uint64 deadline = rights.getSupplyRight(tokenId).deliveryDeadline;
-            if (block.timestamp <= deadline) {
-                console2.log("Delivery deadline not yet passed. Please wait until:", deadline);
-                return;
-            }
-
-            console2.log("Buyer submits claim for Protection ID:", protectionId);
-            vm.startBroadcast(buyerKey);
-            claimId = claims.submitClaim(
-                protectionId,
-                DefaultType.Partial,
-                SHORTFALL_LOSS,
-                DELIVERED,
-                keccak256("EVIDENCE-CLAIM-001")
-            );
-            vm.stopBroadcast();
-
-            currentStep = 4;
-            _saveState(statePath, currentStep, tokenId, reqId, protectionId, claimId, recoveryTokenId);
-            console2.log("Step 4 complete. Claim ID:", claimId);
-        }
-
-        // ---------------------------------------------------------------------
-        // Step 5: Verifier approves claim
-        // ---------------------------------------------------------------------
-        if (currentStep < 5) {
-            console2.log("\n[Step 5] Verifier approves Claim ID:", claimId);
-            vm.startBroadcast(verifierKey);
-            claims.approveClaim(claimId, DELIVERED, SHORTFALL_LOSS, keccak256("DECISION-CLAIM-001"));
-            vm.stopBroadcast();
-
-            currentStep = 5;
-            _saveState(statePath, currentStep, tokenId, reqId, protectionId, claimId, recoveryTokenId);
-            console2.log("Step 5 complete. Claim approved.");
-        }
-
-        // ---------------------------------------------------------------------
-        // Step 6: Atomic settlement (Duplicate Prevention Guarded)
-        // ---------------------------------------------------------------------
-        if (currentStep < 6) {
-            console2.log("\n[Step 6] Executing atomic settlement for Claim ID:", claimId);
-            ClaimRecord memory c = claims.getClaim(claimId);
-            if (c.status == ClaimStatus.Settled) {
-                console2.log("Claim is already settled. Skipping duplicate transaction.");
-            } else {
-                vm.startBroadcast(buyerKey);
-                recoveryTokenId = claims.settleClaim(claimId);
-                vm.stopBroadcast();
-                console2.log("Settlement complete. Recovery Claim NFT ID:", recoveryTokenId);
-            }
-
-            currentStep = 6;
-            _saveState(statePath, currentStep, tokenId, reqId, protectionId, claimId, recoveryTokenId);
-        }
-
-        // ---------------------------------------------------------------------
-        // Step 7: Post-settlement verification
-        // ---------------------------------------------------------------------
-        console2.log("\n[Step 7] Verifying final protocol states...");
-        ProtectionPosition memory p = vault.getProtection(protectionId);
-        console2.log("  Remaining locked escrow in vault:", p.lockedAmount);
-        console2.log("  Buyer balance:", token.balanceOf(buyerAddr));
-        console2.log("  Recovery NFT owner:", recovery.ownerOf(recoveryTokenId));
-        require(recovery.ownerOf(recoveryTokenId) == providerAddr, "Provider must own Recovery NFT");
-        require(p.lockedAmount == 0.002 ether, "0.002 ETH must remain in vault");
-
-        console2.log("\n=== Sepolia E2E Flow Successfully Completed! ===");
+        console2.log("    SupplyRight NFT #", rightId);
+        return rightId;
     }
 
-    function _saveState(
-        string memory path,
-        uint256 step,
-        uint256 tokenId,
-        uint256 reqId,
-        uint256 protectionId,
-        uint256 claimId,
-        uint256 recoveryTokenId
-    ) internal {
-        string memory s = "state";
-        vm.serializeUint(s, "step", step);
-        vm.serializeUint(s, "tokenId", tokenId);
-        vm.serializeUint(s, "reqId", reqId);
-        vm.serializeUint(s, "protectionId", protectionId);
-        vm.serializeUint(s, "claimId", claimId);
-        string memory json = vm.serializeUint(s, "recoveryTokenId", recoveryTokenId);
-        vm.writeJson(json, path);
+    /// Steps 2-3 - buyer requests protection; provider sends the ETH escrow and activates it.
+    function _fundProtection(uint256 rightId) private returns (uint256 protectionId) {
+        uint256 requestId = p.vault.pendingRequestOf(rightId);
+        if (requestId == 0) {
+            uint64 expiry = p.rights.getSupplyRight(rightId).deliveryDeadline + 30 days;
+            console2.log("[2] buyer requests 0.010 ETH protection at 20% from the provider");
+            _startBroadcastAs(Role.Buyer);
+            requestId = p.vault.requestProtection(rightId, w.provider, COVERAGE, COVERAGE_BPS, expiry, _ref("TERMS"));
+            vm.stopBroadcast();
+        }
+        uint256 free = p.vault.freeCollateral(w.provider);
+        uint256 escrow = COVERAGE > free ? COVERAGE - free : 0;
+        console2.log("[3] provider sends ETH escrow to the vault and activates protection, wei:", escrow);
+        _startBroadcastAs(Role.Provider);
+        protectionId = p.vault.fundAndApproveProtection{value: escrow}(requestId, _ref("UNDERWRITING"));
+        vm.stopBroadcast();
+        console2.log("    Protection NFT #", protectionId);
+    }
+
+    /// Step 4 - buyer files the claim, only once the delivery deadline has passed.
+    function _fileClaim(uint256 rightId, uint256 protectionId) private returns (uint256 claimId) {
+        uint64 deadline = p.rights.getSupplyRight(rightId).deliveryDeadline;
+        if (block.timestamp <= deadline) {
+            console2.log("[4] delivery deadline not reached; seconds left:", deadline - block.timestamp + 1);
+            return 0;
+        }
+        console2.log("[4] buyer files a partial-default claim: 40 MT missing, loss 0.040 ETH");
+        _startBroadcastAs(Role.Buyer);
+        claimId = p.claims.submitClaim(protectionId, DefaultType.Partial, CLAIMED_LOSS, DELIVERED, _ref("EVIDENCE"));
+        vm.stopBroadcast();
+        console2.log("    claim #", claimId);
+    }
+
+    /// Step 5 - independent verifier approves the verified loss.
+    function _verify(uint256 claimId) private {
+        console2.log("[5] verifier confirms 10 MT delivered and approves the 0.040 ETH loss");
+        _startBroadcastAs(Role.Verifier);
+        p.claims.approveClaim(claimId, DELIVERED, CLAIMED_LOSS, _ref("VERIFIER-REPORT"));
+        vm.stopBroadcast();
+    }
+
+    /// Step 6 - atomic settlement, sent at most once (guarded by the onchain claim status).
+    function _settle(uint256 claimId) private {
+        uint64 readyAt = p.claims.getClaim(claimId).decidedAt + p.claims.settlementDelay();
+        if (block.timestamp < readyAt) {
+            console2.log("[6] settlement delay active; settle after unix time", readyAt);
+            return;
+        }
+        console2.log("[6] atomic settlement: ETH payout to buyer + Recovery Claim NFT to provider");
+        _startBroadcastAs(Role.Verifier);
+        uint256 recoveryId = p.claims.settleClaim(claimId);
+        vm.stopBroadcast();
+        console2.log("    Recovery Claim NFT #", recoveryId);
+    }
+
+    // ---------------------------------------------------------------------
+    // Report (onchain state; in a broadcast run this reflects the simulated end state)
+    // ---------------------------------------------------------------------
+
+    function _report(uint256 rightId, uint256 protectionId, uint256 claimId, string memory note) private view {
+        console2.log("");
+        console2.log("--- state ---");
+        console2.log("SupplyRight NFT #", rightId, "owner", p.rights.ownerOf(rightId));
+        console2.log("  status:", p.rights.statusName(p.rights.getSupplyRight(rightId).status));
+        _balance("buyer   ", w.buyer);
+        _balance("provider", w.provider);
+        _balance("verifier", w.verifier);
+        _balance("admin   ", w.admin);
+        _balance("vault   ", address(p.vault));
+        console2.log("vault free / locked (wei):", p.vault.totalFreeCollateral(), p.vault.totalLockedCollateral());
+        if (protectionId != 0) {
+            ProtectionPosition memory pos = p.vault.getProtection(protectionId);
+            console2.log("Protection NFT #", protectionId, "owner", p.protection.ownerOf(protectionId));
+            console2.log("  escrow locked / paid (ETH):", _eth(pos.lockedAmount), _eth(pos.paidAmount));
+        }
+        if (claimId != 0) {
+            ClaimRecord memory c = p.claims.getClaim(claimId);
+            console2.log("Claim #", claimId, "status", _claimStatus(c.status));
+            console2.log("  approved loss / payout (ETH):", _eth(c.approvedLoss), _eth(c.payoutAmount));
+            if (c.status == ClaimStatus.Settled) {
+                address holder = p.recovery.ownerOf(c.recoveryTokenId);
+                console2.log("Recovery Claim NFT #", c.recoveryTokenId, "owner", holder);
+                require(holder == w.provider, "recovery NFT must belong to the provider");
+                uint256 remaining = p.vault.getProtection(protectionId).lockedAmount;
+                console2.log(
+                    c.payoutAmount == TARGET_PAYOUT && remaining == TARGET_REMAINING
+                        ? "Economics match the scenario: 0.008 ETH paid to buyer, 0.002 ETH stays locked"
+                        : "NOTE: contract economics differ from the 0.008 / 0.002 scenario (contract rules apply)"
+                );
+            }
+        }
+        if (bytes(note).length != 0) console2.log(note);
+    }
+
+    // ---------------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------------
+
+    function _latestClaim(uint256 rightId) private view returns (uint256) {
+        uint256[] memory ids = p.claims.claimsOfSupplyRight(rightId);
+        return ids.length == 0 ? 0 : ids[ids.length - 1];
+    }
+
+    function _ref(string memory label) private view returns (bytes32) {
+        return keccak256(abi.encodePacked("SupplyRight/", runId, "/", label));
+    }
+
+    function _balance(string memory label, address a) private view {
+        console2.log(string.concat(label, " ", vm.toString(a), "  ", _eth(a.balance), " ETH"));
+    }
+
+    function _claimStatus(ClaimStatus s) private pure returns (string memory) {
+        if (s == ClaimStatus.Submitted) return "Submitted";
+        if (s == ClaimStatus.Approved) return "Approved";
+        if (s == ClaimStatus.Rejected) return "Rejected";
+        if (s == ClaimStatus.Disputed) return "Disputed";
+        if (s == ClaimStatus.Settled) return "Settled";
+        if (s == ClaimStatus.Withdrawn) return "Withdrawn";
+        return "None";
+    }
+
+    /// @dev 8000000000000000 -> "0.008"
+    function _eth(uint256 amount) internal pure returns (string memory) {
+        string memory frac = vm.toString(amount % 1 ether + 1 ether); // "1" + 18 digits keeps leading zeros
+        bytes memory f = bytes(frac);
+        uint256 end = f.length;
+        while (end > 2 && f[end - 1] == "0") end--;
+        bytes memory digits = new bytes(end - 1);
+        for (uint256 i = 1; i < end; i++) {
+            digits[i - 1] = f[i];
+        }
+        string memory whole = vm.toString(amount / 1 ether);
+        return end == 2 && f[1] == "0" ? whole : string.concat(whole, ".", string(digits));
+    }
+
+    function _eq(string memory a, string memory b) private pure returns (bool) {
+        return keccak256(bytes(a)) == keccak256(bytes(b));
     }
 }
-

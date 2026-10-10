@@ -3,8 +3,7 @@ pragma solidity 0.8.28;
 
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {
     SupplyStatus,
@@ -24,24 +23,23 @@ import {
 } from "./interfaces/ISupplyRightProtocol.sol";
 
 /// @title SupplyProtectionVault
-/// @notice Holds protection collateral in an ERC-20 settlement token and manages funded protection
-///         agreements attached to individual supply rights.
+/// @notice Holds protection collateral in native ETH and manages funded protection agreements attached
+///         to individual supply rights.
 ///
 ///         Accounting model (per provider):
 ///           free   - deposited, uncommitted; withdrawable at any time by its owner
 ///           locked - committed to a specific protection; never withdrawable directly
-///         Invariant: token.balanceOf(vault) >= totalFreeCollateral + totalLockedCollateral
+///         Invariant: address(vault).balance >= totalFreeCollateral + totalLockedCollateral
+///         ETH enters only through `deposit` / `fundAndApproveProtection`; plain transfers are rejected
+///         (no receive/fallback), so every wei held is attributed to a provider.
 ///
 ///         There is intentionally no admin withdrawal, sweep, or payout-redirect function. Payouts can only
 ///         be triggered by the bound claim manager and always go to the protection's recorded beneficiary.
 contract SupplyProtectionVault is AccessControl, ReentrancyGuard, ISupplyProtectionVault {
-    using SafeERC20 for IERC20;
-
     bytes32 public constant PROVIDER_ROLE = keccak256("PROVIDER_ROLE");
     uint16 public constant BPS = 10_000;
     uint64 public constant MAX_CLAIM_WINDOW = 365 days;
 
-    IERC20 public immutable settlementToken;
     ISupplyRightNFT public immutable supplyRights;
     IProtectionNFT public immutable protectionNFT;
     address public claimManager;
@@ -115,13 +113,11 @@ contract SupplyProtectionVault is AccessControl, ReentrancyGuard, ISupplyProtect
     error ReleaseNotAllowed();
     error ReleaseBlockedByClaim();
 
-    constructor(address admin, IERC20 token, ISupplyRightNFT supplyRights_, IProtectionNFT protectionNFT_) {
-        if (
-            admin == address(0) || address(token) == address(0) || address(supplyRights_) == address(0)
-                || address(protectionNFT_) == address(0)
-        ) revert ZeroAddress();
+    constructor(address admin, ISupplyRightNFT supplyRights_, IProtectionNFT protectionNFT_) {
+        if (admin == address(0) || address(supplyRights_) == address(0) || address(protectionNFT_) == address(0)) {
+            revert ZeroAddress();
+        }
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
-        settlementToken = token;
         supplyRights = supplyRights_;
         protectionNFT = protectionNFT_;
     }
@@ -143,8 +139,9 @@ contract SupplyProtectionVault is AccessControl, ReentrancyGuard, ISupplyProtect
     // Provider collateral
     // ---------------------------------------------------------------------
 
-    function deposit(uint256 amount) external nonReentrant onlyRole(PROVIDER_ROLE) {
-        _deposit(msg.sender, amount);
+    /// @notice Deposit `msg.value` ETH as free collateral.
+    function deposit() external payable nonReentrant onlyRole(PROVIDER_ROLE) {
+        _deposit(msg.sender, msg.value);
     }
 
     /// @notice Withdraw uncommitted collateral. Works even if the PROVIDER_ROLE was revoked, so funds
@@ -155,7 +152,7 @@ contract SupplyProtectionVault is AccessControl, ReentrancyGuard, ISupplyProtect
         if (free < amount) revert InsufficientFreeCollateral(free, amount);
         freeCollateral[msg.sender] = free - amount;
         totalFreeCollateral -= amount;
-        settlementToken.safeTransfer(msg.sender, amount);
+        Address.sendValue(payable(msg.sender), amount);
         emit CollateralWithdrawn(msg.sender, amount, free - amount);
     }
 
@@ -252,17 +249,18 @@ contract SupplyProtectionVault is AccessControl, ReentrancyGuard, ISupplyProtect
         return _approve(requestId, decisionHash);
     }
 
-    /// @notice Deposit any shortfall and approve in one transaction.
+    /// @notice Deposit `msg.value` ETH and approve in one transaction. The deposit is credited to free
+    ///         collateral first, so `msg.value` must cover at least the shortfall
+    ///         (coverageAmount - freeCollateral); any excess stays as withdrawable free collateral.
     function fundAndApproveProtection(uint256 requestId, bytes32 decisionHash)
         external
+        payable
         nonReentrant
         onlyRole(PROVIDER_ROLE)
         returns (uint256)
     {
-        ProtectionRequest storage r = _requests[requestId];
-        _checkApprover(r);
-        uint256 free = freeCollateral[msg.sender];
-        if (free < r.coverageAmount) _deposit(msg.sender, r.coverageAmount - free);
+        _checkApprover(_requests[requestId]);
+        if (msg.value > 0) _deposit(msg.sender, msg.value);
         return _approve(requestId, decisionHash);
     }
 
@@ -356,7 +354,7 @@ contract SupplyProtectionVault is AccessControl, ReentrancyGuard, ISupplyProtect
         protectionNFT.setClaimStatus(
             protectionId, exhausted ? ProtectionClaimStatus.Exhausted : ProtectionClaimStatus.PartiallyPaid
         );
-        settlementToken.safeTransfer(beneficiary, amount);
+        Address.sendValue(payable(beneficiary), amount);
         emit PayoutExecuted(protectionId, beneficiary, amount, p.lockedAmount);
     }
 
@@ -404,7 +402,6 @@ contract SupplyProtectionVault is AccessControl, ReentrancyGuard, ISupplyProtect
 
     function _deposit(address provider, uint256 amount) private {
         if (amount == 0) revert ZeroAmount();
-        settlementToken.safeTransferFrom(provider, address(this), amount);
         freeCollateral[provider] += amount;
         totalFreeCollateral += amount;
         emit CollateralDeposited(provider, amount, freeCollateral[provider]);

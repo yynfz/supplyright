@@ -2,8 +2,8 @@
 pragma solidity 0.8.28;
 
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SupplyRightFixture} from "./Fixture.t.sol";
+import {EtherRejecter} from "./utils/EtherRejecter.sol";
 import {SupplyClaimManager} from "../src/SupplyClaimManager.sol";
 import {RecoveryClaimNFT} from "../src/RecoveryClaimNFT.sol";
 import {RestrictedTransfer721} from "../src/base/RestrictedTransfer721.sol";
@@ -25,11 +25,11 @@ contract SupplyClaimManagerTest is SupplyRightFixture {
     // ------------------------------------------------------------------
 
     function test_EndToEnd_PartialDefaultCaseStudy() public {
-        // 1-2. Register + mint + activate the supply right (50 MT, 100 mETH).
+        // 1-2. Register + mint + activate the supply right (50 MT, 100 ETH).
         uint256 rightId = _mintActiveRight();
-        // 3-4. Provider deposits 20 mETH and the Protection NFT is minted.
+        // 3-4. Provider deposits 20 ETH and the Protection NFT is minted.
         uint256 pid = _protect(rightId);
-        assertEq(meth.balanceOf(address(vault)), COVERAGE);
+        assertEq(address(vault).balance, COVERAGE);
 
         // 6. Only 10 MT delivered; buyer files a partial-default claim after the deadline.
         _passDeadline();
@@ -37,23 +37,23 @@ contract SupplyClaimManagerTest is SupplyRightFixture {
         assertEq(uint8(rights.getSupplyRight(rightId).status), uint8(SupplyStatus.UnderAssessment));
         assertEq(uint8(protection.getTerms(pid).claimStatus), uint8(ProtectionClaimStatus.ClaimPending));
 
-        // 7. Independent verifier confirms 10 MT delivered and an eligible loss of 80 mETH.
+        // 7. Independent verifier confirms 10 MT delivered and an eligible loss of 80 ETH.
         _approve(claimId, DELIVERED, SHORTFALL_LOSS);
         ClaimRecord memory c = claims.getClaim(claimId);
         assertEq(uint8(c.status), uint8(ClaimStatus.Approved));
         assertEq(uint8(c.verifiedType), uint8(DefaultType.Partial));
-        assertEq(c.payoutAmount, EXPECTED_PAYOUT); // 20% x 80 = 16 mETH
+        assertEq(c.payoutAmount, EXPECTED_PAYOUT); // 20% x 80 = 16 ETH
         assertEq(recovery.totalMinted(), 0, "no recovery NFT before settlement");
 
-        // 8-9. Atomic settlement: 16 mETH to buyer + Recovery Claim NFT to provider in one tx.
-        uint256 buyerBefore = meth.balanceOf(buyer);
+        // 8-9. Atomic settlement: 16 ETH to buyer + Recovery Claim NFT to provider in one tx.
+        uint256 buyerBefore = buyer.balance;
         vm.expectEmit(true, true, true, false, address(claims));
         emit SupplyClaimManager.ClaimSettled(claimId, rightId, pid, buyer, provider, EXPECTED_PAYOUT, 1, bytes32(0));
         vm.prank(outsider); // permissionless trigger; outcome fixed by onchain state
         uint256 recoveryId = claims.settleClaim(claimId);
 
-        assertEq(meth.balanceOf(buyer), buyerBefore + EXPECTED_PAYOUT);
-        assertEq(meth.balanceOf(outsider), 0);
+        assertEq(buyer.balance, buyerBefore + EXPECTED_PAYOUT);
+        assertEq(outsider.balance, 0);
         assertEq(recovery.ownerOf(recoveryId), provider);
         RecoveryClaimData memory rc = recovery.getRecoveryClaim(recoveryId);
         assertEq(rc.claimId, claimId);
@@ -64,13 +64,13 @@ contract SupplyClaimManagerTest is SupplyRightFixture {
         assertTrue(rc.settlementRef != bytes32(0));
         assertEq(uint8(rc.status), uint8(RecoveryStatus.Open));
 
-        // 10. 4 mETH coverage commitment remains locked.
+        // 10. 4 ETH coverage commitment remains locked.
         ProtectionPosition memory p = vault.getProtection(pid);
-        assertEq(p.lockedAmount, 4 * METH);
+        assertEq(p.lockedAmount, 4 * ETH);
         assertEq(p.paidAmount, EXPECTED_PAYOUT);
-        assertEq(vault.totalLockedCollateral(), 4 * METH);
+        assertEq(vault.totalLockedCollateral(), 4 * ETH);
         assertEq(vault.totalPaidOut(), EXPECTED_PAYOUT);
-        assertEq(meth.balanceOf(address(vault)), 4 * METH);
+        assertEq(address(vault).balance, 4 * ETH);
 
         // 11. Onchain state is consistent.
         assertEq(uint8(claims.getClaim(claimId).status), uint8(ClaimStatus.Settled));
@@ -95,7 +95,7 @@ contract SupplyClaimManagerTest is SupplyRightFixture {
         assertEq(p.lockedAmount, 0);
         assertEq(uint8(p.status), uint8(ProtectionStatus.Exhausted));
         assertEq(uint8(protection.getTerms(pid).claimStatus), uint8(ProtectionClaimStatus.Exhausted));
-        assertEq(meth.balanceOf(buyer), COVERAGE);
+        assertEq(buyer.balance, COVERAGE);
 
         // Exhausted protection cannot accept further claims.
         vm.prank(buyer);
@@ -204,13 +204,13 @@ contract SupplyClaimManagerTest is SupplyRightFixture {
         claims.submitClaim(pid, DefaultType.Partial, SHORTFALL_LOSS + 1, DELIVERED, keccak256("e"));
 
         // Verifier cannot approve more than claimed, nor more than the verified shortfall.
-        uint256 claimId = _submitPartial(pid, DELIVERED, 50 * METH);
+        uint256 claimId = _submitPartial(pid, DELIVERED, 50 * ETH);
         vm.startPrank(verifier);
-        vm.expectRevert(abi.encodeWithSelector(SupplyClaimManager.ExcessiveLoss.selector, 50 * METH + 1, 50 * METH));
-        claims.approveClaim(claimId, DELIVERED, 50 * METH + 1, keccak256("r"));
-        // With 30 MT verified as delivered, only 40 mETH of loss is recognizable.
-        vm.expectRevert(abi.encodeWithSelector(SupplyClaimManager.ExcessiveLoss.selector, 50 * METH, 40 * METH));
-        claims.approveClaim(claimId, 30 * MT, 50 * METH, keccak256("r"));
+        vm.expectRevert(abi.encodeWithSelector(SupplyClaimManager.ExcessiveLoss.selector, 50 * ETH + 1, 50 * ETH));
+        claims.approveClaim(claimId, DELIVERED, 50 * ETH + 1, keccak256("r"));
+        // With 30 MT verified as delivered, only 40 ETH of loss is recognizable.
+        vm.expectRevert(abi.encodeWithSelector(SupplyClaimManager.ExcessiveLoss.selector, 50 * ETH, 40 * ETH));
+        claims.approveClaim(claimId, 30 * MT, 50 * ETH, keccak256("r"));
         vm.stopPrank();
     }
 
@@ -224,7 +224,7 @@ contract SupplyClaimManagerTest is SupplyRightFixture {
         // Second claim while one is open.
         vm.expectRevert(abi.encodeWithSelector(SupplyClaimManager.ClaimAlreadyOpen.selector, claimId));
         vm.prank(buyer);
-        claims.submitClaim(pid, DefaultType.Partial, 1 * METH, DELIVERED, keccak256("other-evidence"));
+        claims.submitClaim(pid, DefaultType.Partial, 1 * ETH, DELIVERED, keccak256("other-evidence"));
 
         claims.settleClaim(claimId);
 
@@ -236,14 +236,14 @@ contract SupplyClaimManagerTest is SupplyRightFixture {
         bytes32 used = claims.getClaim(claimId).evidenceHash;
         vm.expectRevert(SupplyClaimManager.EvidenceAlreadyUsed.selector);
         vm.prank(buyer);
-        claims.submitClaim(pid, DefaultType.Partial, 1 * METH, DELIVERED, used);
+        claims.submitClaim(pid, DefaultType.Partial, 1 * ETH, DELIVERED, used);
 
         // Re-claiming the same 40 MT shortfall with fresh evidence: loss cap is already consumed.
-        vm.expectRevert(abi.encodeWithSelector(SupplyClaimManager.ExcessiveLoss.selector, 1 * METH, 0));
+        vm.expectRevert(abi.encodeWithSelector(SupplyClaimManager.ExcessiveLoss.selector, 1 * ETH, 0));
         vm.prank(buyer);
-        claims.submitClaim(pid, DefaultType.Partial, 1 * METH, DELIVERED, keccak256("fresh"));
+        claims.submitClaim(pid, DefaultType.Partial, 1 * ETH, DELIVERED, keccak256("fresh"));
 
-        assertEq(meth.balanceOf(buyer), EXPECTED_PAYOUT);
+        assertEq(buyer.balance, EXPECTED_PAYOUT);
         assertEq(recovery.totalMinted(), 1);
         assertEq(claims.remainingLossCap(rightId, DELIVERED), 0);
     }
@@ -252,22 +252,22 @@ contract SupplyClaimManagerTest is SupplyRightFixture {
         (uint256 rightId, uint256 pid) = _setupProtected();
         _passDeadline();
 
-        // Claim 1: 30 mETH loss recognized -> 6 mETH payout.
-        uint256 c1 = _submitPartial(pid, DELIVERED, 30 * METH);
-        _approve(c1, DELIVERED, 30 * METH);
+        // Claim 1: 30 ETH loss recognized -> 6 ETH payout.
+        uint256 c1 = _submitPartial(pid, DELIVERED, 30 * ETH);
+        _approve(c1, DELIVERED, 30 * ETH);
         claims.settleClaim(c1);
-        assertEq(vault.getProtection(pid).lockedAmount, 14 * METH);
-        assertEq(claims.remainingLossCap(rightId, DELIVERED), 50 * METH);
+        assertEq(vault.getProtection(pid).lockedAmount, 14 * ETH);
+        assertEq(claims.remainingLossCap(rightId, DELIVERED), 50 * ETH);
 
-        // Claim 2: further 50 mETH loss -> 10 mETH payout; 4 mETH remains.
-        uint256 c2 = _submitPartial(pid, DELIVERED, 50 * METH);
-        _approve(c2, DELIVERED, 50 * METH);
+        // Claim 2: further 50 ETH loss -> 10 ETH payout; 4 ETH remains.
+        uint256 c2 = _submitPartial(pid, DELIVERED, 50 * ETH);
+        _approve(c2, DELIVERED, 50 * ETH);
         claims.settleClaim(c2);
 
         ProtectionPosition memory p = vault.getProtection(pid);
-        assertEq(p.paidAmount, 16 * METH);
-        assertEq(p.lockedAmount, 4 * METH);
-        assertEq(meth.balanceOf(buyer), 16 * METH);
+        assertEq(p.paidAmount, 16 * ETH);
+        assertEq(p.lockedAmount, 4 * ETH);
+        assertEq(buyer.balance, 16 * ETH);
         assertEq(recovery.totalMinted(), 2);
         assertEq(claims.cumulativeSettledLoss(rightId), SHORTFALL_LOSS);
     }
@@ -275,7 +275,7 @@ contract SupplyClaimManagerTest is SupplyRightFixture {
     function test_PayoutCappedByRemainingCoverage() public {
         (, uint256 pid) = _setupProtected();
         _passDeadline();
-        // 90% coverage on an 80 mETH loss would be 72 mETH, but only 20 mETH is funded.
+        // 90% coverage on an 80 ETH loss would be 72 ETH, but only 20 ETH is funded.
         uint256 c1 = _submitPartial(pid, DELIVERED, SHORTFALL_LOSS);
         _approve(c1, DELIVERED, SHORTFALL_LOSS);
         assertEq(claims.getClaim(c1).payoutAmount, EXPECTED_PAYOUT);
@@ -298,7 +298,7 @@ contract SupplyClaimManagerTest is SupplyRightFixture {
 
         vm.expectRevert(abi.encodeWithSelector(SupplyClaimManager.InvalidClaimStatus.selector, ClaimStatus.Rejected));
         claims.settleClaim(claimId);
-        assertEq(meth.balanceOf(buyer), 0);
+        assertEq(buyer.balance, 0);
         assertEq(recovery.totalMinted(), 0);
         assertEq(uint8(rights.getSupplyRight(rightId).status), uint8(SupplyStatus.Active));
         assertEq(vault.getProtection(pid).lockedAmount, COVERAGE);
@@ -327,10 +327,10 @@ contract SupplyClaimManagerTest is SupplyRightFixture {
         vm.prank(buyer);
         claims.raiseObjection(claimId, keccak256("buyer-objection"));
 
-        // Verifier re-decides with a lower eligible loss: 60 mETH -> 12 mETH payout.
-        _approve(claimId, DELIVERED, 60 * METH);
+        // Verifier re-decides with a lower eligible loss: 60 ETH -> 12 ETH payout.
+        _approve(claimId, DELIVERED, 60 * ETH);
         claims.settleClaim(claimId);
-        assertEq(meth.balanceOf(buyer), 12 * METH);
+        assertEq(buyer.balance, 12 * ETH);
     }
 
     function test_RevertWhen_OutsiderObjects() public {
@@ -359,7 +359,7 @@ contract SupplyClaimManagerTest is SupplyRightFixture {
 
         _approve(claimId, DELIVERED, SHORTFALL_LOSS);
         claims.settleClaim(claimId);
-        assertEq(meth.balanceOf(buyer), EXPECTED_PAYOUT);
+        assertEq(buyer.balance, EXPECTED_PAYOUT);
     }
 
     function test_RevertWhen_AppealAfterWindow() public {
@@ -395,7 +395,7 @@ contract SupplyClaimManagerTest is SupplyRightFixture {
         claims.settleClaim(claimId);
         vm.warp(readyAt);
         claims.settleClaim(claimId);
-        assertEq(meth.balanceOf(buyer), EXPECTED_PAYOUT);
+        assertEq(buyer.balance, EXPECTED_PAYOUT);
     }
 
     function test_RevertWhen_SettingsExceedBounds() public {
@@ -421,13 +421,19 @@ contract SupplyClaimManagerTest is SupplyRightFixture {
     // Atomicity
     // ------------------------------------------------------------------
 
-    function test_AtomicRevert_WhenTokenPaymentFails() public {
+    function test_AtomicRevert_WhenEthPaymentFails() public {
         (uint256 rightId, uint256 pid, uint256 claimId) = _approvedDemoClaim();
-        vm.mockCallRevert(address(meth), abi.encodeWithSelector(IERC20.transfer.selector), "TOKEN_FAILURE");
-        vm.expectRevert();
+        // The beneficiary rejects ETH: the payout call fails, so the whole settlement must revert.
+        vm.etch(buyer, address(new EtherRejecter()).code);
+        vm.expectRevert(EtherRejecter.Rejected.selector);
         claims.settleClaim(claimId);
-        vm.clearMockedCalls();
         _assertNothingSettled(rightId, pid, claimId);
+
+        // Once the beneficiary accepts ETH again the same claim settles normally.
+        vm.etch(buyer, "");
+        claims.settleClaim(claimId);
+        assertEq(buyer.balance, EXPECTED_PAYOUT);
+        assertEq(recovery.ownerOf(1), provider);
     }
 
     function test_AtomicRevert_WhenRecoveryMintFails() public {
@@ -443,13 +449,13 @@ contract SupplyClaimManagerTest is SupplyRightFixture {
 
         // Once the failure is gone the same claim settles normally.
         claims.settleClaim(claimId);
-        assertEq(meth.balanceOf(buyer), EXPECTED_PAYOUT);
+        assertEq(buyer.balance, EXPECTED_PAYOUT);
         assertEq(recovery.ownerOf(1), provider);
     }
 
     function _assertNothingSettled(uint256 rightId, uint256 pid, uint256 claimId) internal view {
-        assertEq(meth.balanceOf(buyer), 0, "buyer unpaid");
-        assertEq(meth.balanceOf(address(vault)), COVERAGE, "vault untouched");
+        assertEq(buyer.balance, 0, "buyer unpaid");
+        assertEq(address(vault).balance, COVERAGE, "vault untouched");
         assertEq(vault.getProtection(pid).lockedAmount, COVERAGE);
         assertEq(vault.getProtection(pid).paidAmount, 0);
         assertTrue(vault.getProtection(pid).claimOpen);
@@ -501,7 +507,7 @@ contract SupplyClaimManagerTest is SupplyRightFixture {
         uint256 expiry = block.timestamp + 1 hours;
 
         // Tampered amount.
-        bytes memory sig = _signApproval(verifierPk, claimId, DELIVERED, 10 * METH, keccak256("r"), verifier, 0, expiry);
+        bytes memory sig = _signApproval(verifierPk, claimId, DELIVERED, 10 * ETH, keccak256("r"), verifier, 0, expiry);
         vm.expectRevert(SupplyClaimManager.InvalidAttestation.selector);
         claims.approveClaimWithAttestation(claimId, DELIVERED, SHORTFALL_LOSS, keccak256("r"), verifier, expiry, sig);
 
@@ -532,9 +538,9 @@ contract SupplyClaimManagerTest is SupplyRightFixture {
 
         vm.startPrank(provider);
         recovery.updateRecovery(rid, RecoveryStatus.InRecovery, 0, keccak256("demand-letter"));
-        recovery.updateRecovery(rid, RecoveryStatus.PartiallyRecovered, 5 * METH, keccak256("settlement-1"));
+        recovery.updateRecovery(rid, RecoveryStatus.PartiallyRecovered, 5 * ETH, keccak256("settlement-1"));
         vm.expectRevert(RecoveryClaimNFT.InvalidRecoveryUpdate.selector);
-        recovery.updateRecovery(rid, RecoveryStatus.PartiallyRecovered, 4 * METH, keccak256("decrease"));
+        recovery.updateRecovery(rid, RecoveryStatus.PartiallyRecovered, 4 * ETH, keccak256("decrease"));
         vm.expectRevert(abi.encodeWithSelector(RestrictedTransfer721.TransferNotAuthorized.selector, rid, outsider));
         recovery.transferFrom(provider, outsider, rid);
         vm.stopPrank();

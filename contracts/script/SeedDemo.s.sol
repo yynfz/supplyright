@@ -3,39 +3,35 @@ pragma solidity 0.8.28;
 
 import {console2} from "forge-std/Script.sol";
 import {ScriptBase} from "./ScriptBase.s.sol";
-import {MockETH} from "../src/MockETH.sol";
 import {SupplyRightNFT} from "../src/SupplyRightNFT.sol";
 import {SupplyProtectionVault} from "../src/SupplyProtectionVault.sol";
 
 /// @notice Demo phase 1 - FICTIONAL case study, testnet values only.
 ///         Registers three supply rights for "PT Contoh Manufaktur Baterai (fiktif)":
-///           A  Nikel Sulfat 50 MT / 100 mETH  - active, 10 MT delivered, protected (20 mETH @ 20%)
-///           B  Litium Karbonat 12 MT / 36 mETH - fulfilled
-///           C  Aluminium Ingot 80 MT / 48 mETH - active, unprotected
-///         Every hash is the SHA-256 of the matching file in demo/documents.
+///           A  Nikel Sulfat 50 MT / 100 ETH  - active, 10 MT delivered, protected (20 ETH @ 20%)
+///           B  Litium Karbonat 12 MT / 36 ETH - fulfilled
+///           C  Aluminium Ingot 80 MT / 48 ETH - active, unprotected
+///         Every hash is the SHA-256 of the matching file in demo/documents. Amounts are native ETH and
+///         sized for the local Anvil chain (its dev accounts hold 10,000 test ETH); on Sepolia use
+///         RunSepoliaE2E, whose amounts fit a testnet faucet budget.
 ///
-/// Env: DEPLOYER_PRIVATE_KEY, BUYER_PRIVATE_KEY, PROVIDER_PRIVATE_KEY (Anvil defaults locally)
-///      DEMO_DEADLINE_DELAY  seconds until case A's delivery deadline (default 180)
+/// Signers: admin (registrar), buyer, provider - Anvil keys locally, keystores via --account on Sepolia.
+/// Env: DEMO_DEADLINE_DELAY  seconds until case A's delivery deadline (default 180)
 contract SeedDemo is ScriptBase {
     uint256 internal constant MT = 1e3;
 
     function run() external {
-        uint256 registrarKey = _key("DEPLOYER_PRIVATE_KEY", ANVIL_KEY_0);
-        uint256 buyerKey = _key("BUYER_PRIVATE_KEY", ANVIL_KEY_1);
-        uint256 providerKey = _key("PROVIDER_PRIVATE_KEY", ANVIL_KEY_2);
-        address buyer = vm.addr(buyerKey);
-        address provider = vm.addr(providerKey);
+        address buyer = _wallet(Role.Buyer);
+        address provider = _wallet(Role.Provider);
 
         SupplyRightNFT rights = SupplyRightNFT(_readDeployment("supplyRightNFT"));
         SupplyProtectionVault vault = SupplyProtectionVault(_readDeployment("vault"));
-        MockETH token = MockETH(_readDeployment("settlementToken"));
-        bool mockToken = vm.parseJsonBool(vm.readFile(_deploymentPath()), ".mockToken");
 
         uint64 deadlineA = uint64(block.timestamp + vm.envOr("DEMO_DEADLINE_DELAY", uint256(180)));
         uint256 coverage = 20 ether;
 
         // --- Registrar: verify documents offchain, mint, record supplier acknowledgement -------------
-        vm.startBroadcast(registrarKey);
+        _startBroadcastAs(Role.Admin);
         uint256 a = rights.mintSupplyRight(
             SupplyRightNFT.MintParams({
                 buyer: buyer,
@@ -83,21 +79,19 @@ contract SeedDemo is ScriptBase {
         _log("Registrar", "minted supply rights A, B (fulfilled), C");
 
         // --- Buyer: request protection for the critical material ------------------------------------
-        vm.startBroadcast(buyerKey);
+        _startBroadcastAs(Role.Buyer);
         uint256 requestId = vault.requestProtection(
             a, provider, coverage, 2_000, deadlineA + 30 days, _docHash("PROTECTION-TERMS-PT-0417.txt")
         );
         vm.stopBroadcast();
-        _log("Buyer", "requested 20 mETH protection at 20% for supply right A");
+        _log("Buyer", "requested 20 ETH protection at 20% for supply right A");
 
         // --- Provider: deposit collateral, approve -> Protection NFT --------------------------------
-        vm.startBroadcast(providerKey);
-        if (mockToken && token.balanceOf(provider) < coverage) token.faucet(coverage);
-        token.approve(address(vault), coverage);
-        vault.deposit(coverage);
+        _startBroadcastAs(Role.Provider);
+        vault.deposit{value: coverage}();
         uint256 protectionId = vault.approveProtection(requestId, _docHash("UNDERWRITING-MEMO-0417.txt"));
         vm.stopBroadcast();
-        _log("Provider", "deposited 20 mETH and minted the Protection NFT");
+        _log("Provider", "deposited 20 ETH and minted the Protection NFT");
 
         string memory k = "demo";
         vm.serializeUint(k, "supplyRightA", a);

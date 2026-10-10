@@ -170,7 +170,7 @@ contract SupplyClaimManager is AccessControl, ReentrancyGuard, EIP712, IClaimRel
     // ---------------------------------------------------------------------
 
     /// @param claimType Partial (some quantity delivered) or Complete (nothing delivered).
-    /// @param claimedLoss Loss the buyer claims, in settlement-token units. The verifier may approve less.
+    /// @param claimedLoss Loss the buyer claims, in wei. The verifier may approve less.
     /// @param reportedDeliveredQuantity Buyer-reported cumulative delivered quantity (3 implied decimals).
     /// @param evidenceHash Hash of the evidence bundle (delivery notes, correspondence, inspection report).
     function submitClaim(
