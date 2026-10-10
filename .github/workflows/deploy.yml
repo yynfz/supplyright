@@ -1,0 +1,82 @@
+name: Deploy
+
+# Runs the repo's tests first, then deploys over SSH to the VPS that serves
+# https://supplyright.mufakat.id. The remote work happens in scripts/deploy.sh.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-supplyright
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Run tests
+        run: npm test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The warning step below diffs against the previous commit.
+          fetch-depth: 0
+
+      # The web deploy does not touch the demo chain or the database. Say so loudly instead of
+      # letting a contract or migration change ship silently.
+      - name: Warn when contracts or migrations changed
+        run: |
+          set -uo pipefail
+          base="${{ github.event.before }}"
+          case "$base" in
+            ""|0000000000000000000000000000000000000000) base="HEAD~1" ;;
+          esac
+          changed="$(git diff --name-only "$base" HEAD 2>/dev/null | grep -E '^(contracts|supabase)/' || true)"
+          if [ -n "$changed" ]; then
+            echo "::warning::contracts/ or supabase/ changed in this push — the web deploy does not apply these:"
+            printf '%s\n' "$changed"
+          fi
+
+      - name: Set up SSH
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          if [ -n "$DEPLOY_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy over SSH
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$DEPLOY_PATH' && bash scripts/deploy.sh"
