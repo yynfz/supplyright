@@ -29,7 +29,34 @@ const ABIS: Record<ContractKey, Abi> = {
   claimManager: claimManagerAbi as Abi,
 };
 
-const DEFAULT_CHUNK = BigInt(process.env.NEXT_PUBLIC_LOG_CHUNK_SIZE || "20000");
+const SEPOLIA_CHAIN_ID = 11155111;
+const DEFAULT_LOG_CHUNK_SIZE = 20_000n;
+const SEPOLIA_FREE_TIER_LOG_CHUNK_SIZE = 10n;
+
+function configuredLogChunkSize() {
+  const value = process.env.NEXT_PUBLIC_LOG_CHUNK_SIZE;
+  if (!value) return DEFAULT_LOG_CHUNK_SIZE;
+  try {
+    const parsed = BigInt(value);
+    return parsed > 0n ? parsed : DEFAULT_LOG_CHUNK_SIZE;
+  } catch {
+    return DEFAULT_LOG_CHUNK_SIZE;
+  }
+}
+
+function initialLogChunkSize(d: Deployment) {
+  const configured = configuredLogChunkSize();
+  if (d.chainId === SEPOLIA_CHAIN_ID && configured > SEPOLIA_FREE_TIER_LOG_CHUNK_SIZE) {
+    return SEPOLIA_FREE_TIER_LOG_CHUNK_SIZE;
+  }
+  return configured;
+}
+
+function smallerLogChunkSize(chunk: bigint) {
+  if (chunk <= 1n) return null;
+  const next = chunk / 2n;
+  return next > 0n ? next : 1n;
+}
 
 export function decodeProtocolLog(d: Deployment, log: Log, timestamp = 0): ProtocolEvent | null {
   const contract = (Object.keys(ABIS) as ContractKey[]).find(
@@ -55,14 +82,14 @@ export function decodeProtocolLog(d: Deployment, log: Log, timestamp = 0): Proto
 
 /**
  * Fetches every protocol event since the deployment block. Ranges are chunked (public Sepolia RPCs cap
- * eth_getLogs ranges) and the chunk is halved automatically if the RPC rejects it.
+ * eth_getLogs ranges tightly) and the chunk is halved automatically if the RPC rejects it.
  */
 export async function fetchProtocolEvents(client: PublicClient, d: Deployment): Promise<ProtocolEvent[]> {
   const latest = await client.getBlockNumber();
   const addresses = [d.supplyRightNFT, d.protectionNFT, d.recoveryClaimNFT, d.vault, d.claimManager];
   const logs: Log[] = [];
   let from = BigInt(d.startBlock ?? 0);
-  let chunk = DEFAULT_CHUNK;
+  let chunk = initialLogChunkSize(d);
 
   while (from <= latest) {
     const to = from + chunk - 1n > latest ? latest : from + chunk - 1n;
@@ -71,8 +98,9 @@ export async function fetchProtocolEvents(client: PublicClient, d: Deployment): 
       logs.push(...batch);
       from = to + 1n;
     } catch (e) {
-      if (chunk <= 500n) throw e;
-      chunk = chunk / 2n;
+      const smaller = smallerLogChunkSize(chunk);
+      if (smaller === null) throw e;
+      chunk = smaller;
     }
   }
 

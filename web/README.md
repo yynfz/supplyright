@@ -27,7 +27,7 @@ Open `http://localhost:3000`. Private operations request a wallet login signatur
 | `NEXT_PUBLIC_LOCAL_RPC_URL`, `NEXT_PUBLIC_SEPOLIA_RPC_URL` | Browser RPC endpoints |
 | `LOCAL_RPC_URL`, `SEPOLIA_RPC_URL` | Optional server RPC overrides |
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | Optional WalletConnect project; not required for injected wallets |
-| `NEXT_PUBLIC_LOG_CHUNK_SIZE` | Initial event range, default 20,000 blocks |
+| `NEXT_PUBLIC_LOG_CHUNK_SIZE` | Initial event range, default 20,000 blocks. Sepolia reads are capped to 10 blocks to stay compatible with Alchemy free-tier `eth_getLogs`. |
 | `CONTRACTS_DEPLOYMENTS_DIR` | Server JSON directory, default `../contracts/deployments` relative to web cwd |
 | `SUPPLYRIGHT_DEPLOYMENTS` | JSON array of deployments; overrides files by chain ID |
 
