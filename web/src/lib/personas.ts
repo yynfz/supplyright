@@ -38,7 +38,42 @@ export const PERSONAS = [
   },
 ] as const;
 
-export type Persona = (typeof PERSONAS)[number];
+export const SEPOLIA_ROLES = [
+  {
+    id: "sepolia-admin",
+    name: "SupplyRight Admin (Sepolia)",
+    short: "Admin",
+    role: "supplyright-admin",
+    address: getAddress("0x3a570002A98Bbe4cC7A182ccdbb5EF0dc2633CBc"),
+    description: "Validasi dokumen, pencetakan Supply Right, dan administrasi peran.",
+  },
+  {
+    id: "sepolia-buyer",
+    name: "SupplyRight Buyer (Sepolia)",
+    short: "Buyer",
+    role: "supplyright-buyer",
+    address: getAddress("0x6ACF72e4047d26b1C0AA6292BD38B03E9a70580B"),
+    description: "Pendaftaran PO, kepemilikan SupplyRight NFT, pengajuan klaim.",
+  },
+  {
+    id: "sepolia-provider",
+    name: "SupplyRight Provider (Sepolia)",
+    short: "Provider",
+    role: "supplyright-provider",
+    address: getAddress("0xDAB3737215e8BA6b4d18e47b422a52bCfE03e066"),
+    description: "Penyetoran escrow, aktivasi proteksi, penerima Recovery Claim NFT.",
+  },
+  {
+    id: "sepolia-verifier",
+    name: "SupplyRight Verifier (Sepolia)",
+    short: "Verifier",
+    role: "supplyright-verifier",
+    address: getAddress("0x4481A845dFb7855dC1e0946C26965f4a856B12dD"),
+    description: "Verifikasi kegagalan supplier dan persetujuan klaim independen.",
+  },
+] as const;
+
+export type Persona = (typeof PERSONAS)[number] | (typeof SEPOLIA_ROLES)[number];
 
 const storageKey = (id: string) => `supplyright.persona.${id}`;
 
@@ -129,5 +164,9 @@ export function personaConnector(persona: Persona) {
 
 export function personaFor(address?: string | null): Persona | undefined {
   if (!address) return undefined;
-  return PERSONAS.find((p) => p.address.toLowerCase() === address.toLowerCase());
+  const lower = address.toLowerCase();
+  return (
+    PERSONAS.find((p) => p.address.toLowerCase() === lower) ||
+    SEPOLIA_ROLES.find((p) => p.address.toLowerCase() === lower)
+  );
 }

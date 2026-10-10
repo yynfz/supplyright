@@ -138,6 +138,63 @@ function PersonaSwitcher() {
   );
 }
 
+import { useBalances } from "@/hooks/use-protocol";
+import { formatEth, formatToken, shortAddress } from "@/lib/format";
+import { addressUrl } from "@/lib/chains";
+import { ExternalLink, Wallet } from "lucide-react";
+
+function ConnectedRoleOverview() {
+  const { address } = useAccount();
+  const { chainId } = useActiveChain();
+  const { data: roles } = useRoles(address);
+  const { data: balances } = useBalances(address);
+  const persona = personaFor(address);
+
+  if (!address) return null;
+
+  const etherscan = addressUrl(chainId, address);
+  const roleName = persona?.short || (roles?.admin ? "Admin" : roles?.buyer ? "Buyer" : roles?.provider ? "Provider" : roles?.verifier ? "Verifier" : null);
+
+  return (
+    <div className="hidden items-center gap-2 rounded-md border bg-slate-50 px-2.5 py-1 text-xs text-slate-700 md:flex">
+      <div className="flex items-center gap-1.5 font-medium">
+        <Wallet className="size-3.5 text-teal-600" />
+        {roleName && (
+          <span className="rounded bg-teal-100 px-1.5 py-0.2 text-[10px] font-semibold text-teal-900">
+            {roleName}
+          </span>
+        )}
+        {etherscan ? (
+          <a
+            href={etherscan.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-0.5 font-mono text-[11px] text-slate-800 hover:text-teal-700 hover:underline"
+          >
+            {shortAddress(address)}
+            <ExternalLink className="size-2.5" />
+          </a>
+        ) : (
+          <span className="font-mono text-[11px]">{shortAddress(address)}</span>
+        )}
+      </div>
+
+      {balances && (
+        <div className="flex items-center gap-2 border-l border-slate-200 pl-2 text-[11px]">
+          <span>
+            ETH: <strong className="font-semibold text-slate-900">{formatEth(balances.eth, { digits: 3 })}</strong>
+          </span>
+          {balances.locked > 0n && (
+            <span>
+              Escrow: <strong className="font-semibold text-teal-700">{formatToken(balances.locked, { digits: 3 })}</strong>
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RoleChips() {
   const { address } = useAccount();
   const { data } = useRoles(address);
@@ -195,6 +252,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           <div className="ml-auto flex items-center gap-2">
             <RoleChips />
+            <ConnectedRoleOverview />
             <PersonaSwitcher />
             <ConnectButton chainStatus="icon" showBalance={false} accountStatus={{ smallScreen: "avatar", largeScreen: "address" }} />
           </div>

@@ -1,0 +1,49 @@
+{
+  "network": "sepolia",
+  "chainId": 11155111,
+  "rpcEnvVar": "SEPOLIA_RPC_URL",
+  "deployer": {
+    "role": "deployer",
+    "address": "0x959a7CDa30042C26deAAE4Cf27Cc319dFE2CB5B8",
+    "description": "Initial contract deployer and default admin"
+  },
+  "wallets": {
+    "buyer": {
+      "role": "supplyright-buyer",
+      "address": "0x6ACF72e4047d26b1C0AA6292BD38B03E9a70580B",
+      "keystoreAlias": "supplyright-buyer",
+      "keystorePath": "~/.foundry/keystores/supplyright-buyer",
+      "description": "Registers POs, holds SupplyRight NFTs, files claims, receives payout settlements"
+    },
+    "provider": {
+      "role": "supplyright-provider",
+      "address": "0xDAB3737215e8BA6b4d18e47b422a52bCfE03e066",
+      "keystoreAlias": "supplyright-provider",
+      "keystorePath": "~/.foundry/keystores/supplyright-provider",
+      "description": "Underwrites protection, deposits escrow collateral, receives Recovery Claim NFTs upon settlement"
+    },
+    "verifier": {
+      "role": "supplyright-verifier",
+      "address": "0x4481A845dFb7855dC1e0946C26965f4a856B12dD",
+      "keystoreAlias": "supplyright-verifier",
+      "keystorePath": "~/.foundry/keystores/supplyright-verifier",
+      "description": "Independent verifier: assesses delivery shortfalls and approves/rejects claims"
+    },
+    "admin": {
+      "role": "supplyright-admin",
+      "address": "0x3a570002A98Bbe4cC7A182ccdbb5EF0dc2633CBc",
+      "keystoreAlias": "supplyright-admin",
+      "keystorePath": "~/.foundry/keystores/supplyright-admin",
+      "description": "Protocol admin & registrar: validates documents, mints supply rights, manages roles"
+    }
+  },
+  "contracts": {
+    "settlementToken": null,
+    "supplyRightNFT": null,
+    "protectionNFT": null,
+    "recoveryClaimNFT": null,
+    "vault": null,
+    "claimManager": null
+  }
+}
+

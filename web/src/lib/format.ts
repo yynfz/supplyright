@@ -15,6 +15,13 @@ export function formatToken(value: bigint | undefined | null, opts: { symbol?: b
   return opts.symbol === false ? s : `${s} ${TOKEN_SYMBOL}`;
 }
 
+export function formatEth(value: bigint | undefined | null, opts: { symbol?: boolean; digits?: number } = {}) {
+  if (value === undefined || value === null) return "-";
+  const n = Number(formatUnits(value, 18));
+  const s = idNumber(opts.digits ?? 4).format(n);
+  return opts.symbol === false ? s : `${s} ETH`;
+}
+
 export function parseToken(input: string): bigint {
   return parseUnits(input.replace(",", ".").trim() || "0", TOKEN_DECIMALS);
 }
